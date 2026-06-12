@@ -23,6 +23,9 @@ var _targets: Dictionary = {}  # player_id -> Vector2 (latest server position)
 @onready var _camera: Camera2D = $Camera
 @onready var _status: Label = $UI/Status
 @onready var _leave: Button = $UI/LeaveButton
+@onready var _waves: AudioStreamPlayer = $Waves
+
+var _pirate_frames: SpriteFrames
 
 func _ready() -> void:
 	_leave.pressed.connect(_return_to_port)
@@ -32,11 +35,41 @@ func _ready() -> void:
 		get_tree().call_deferred("change_scene_to_file", LOGIN_SCENE)
 		return
 
+	_pirate_frames = _build_pirate_frames()
+	_start_ambience()
 	_camera.make_current()
 	var err := _socket.connect_to_url(GAME_SERVER_URL)
 	if err != OK:
 		_status.text = "Failed to start connection: %s" % error_string(err)
 		set_process(false)
+
+## Slice the generated sprite sheet (rows: down/up/left/right, two walk
+## frames each) into named animations. One SpriteFrames is shared by every
+## player node.
+func _build_pirate_frames() -> SpriteFrames:
+	var sheet: Texture2D = load("res://assets/pirate_sheet.png")
+	var frames := SpriteFrames.new()
+	var dirs := ["down", "up", "left", "right"]
+	for row in dirs.size():
+		var anim: String = "walk_" + dirs[row]
+		frames.add_animation(anim)
+		frames.set_animation_speed(anim, 6.0)
+		for col in 2:
+			var tile := AtlasTexture.new()
+			tile.atlas = sheet
+			tile.region = Rect2(col * 16, row * 16, 16, 16)
+			frames.add_frame(anim, tile)
+	return frames
+
+func _start_ambience() -> void:
+	var stream: AudioStreamWAV = load("res://assets/audio/waves.wav")
+	if stream == null:
+		push_warning("waves.wav missing — run: make art")
+		return
+	stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	stream.loop_end = stream.data.size() / 4 # 16-bit stereo: 4 bytes/frame
+	_waves.stream = stream
+	_waves.play()
 
 func _process(delta: float) -> void:
 	_socket.poll()
@@ -68,9 +101,25 @@ func _animate_players(delta: float) -> void:
 	var blend := 1.0 - exp(-LERP_RATE * delta)
 	for id: String in _nodes:
 		var node: Node2D = _nodes[id]
-		node.position = node.position.lerp(_targets.get(id, node.position), blend)
+		var target: Vector2 = _targets.get(id, node.position)
+		var motion := target - node.position
+		node.position = node.position.lerp(target, blend)
+		_face_sprite(node.get_node("Sprite") as AnimatedSprite2D, motion)
 	if _nodes.has(_my_id):
 		_camera.position = _nodes[_my_id].position
+
+## Choose the walk animation from how the sprite is actually moving; stand
+## still on frame 0 when the server stops reporting movement.
+func _face_sprite(sprite: AnimatedSprite2D, motion: Vector2) -> void:
+	if motion.length() < 1.5:
+		sprite.stop()
+		sprite.frame = 0
+		return
+	var anim := "walk_right" if motion.x > 0 else "walk_left"
+	if absf(motion.y) > absf(motion.x):
+		anim = "walk_down" if motion.y > 0 else "walk_up"
+	if sprite.animation != anim or not sprite.is_playing():
+		sprite.play(anim)
 
 func _send(msg: Dictionary) -> void:
 	_socket.send_text(JSON.stringify(msg))
@@ -120,17 +169,23 @@ func _spawn_node(id: String, pirate_name: String, at: Vector2) -> void:
 	var node := Node2D.new()
 	node.position = at
 
-	var body := ColorRect.new()
-	body.size = Vector2(24, 24)
-	body.position = Vector2(-12, -12)
-	body.color = Color(0.95, 0.78, 0.25) if id == _my_id else Color(0.78, 0.28, 0.22)
-	node.add_child(body)
+	var sprite := AnimatedSprite2D.new()
+	sprite.name = "Sprite"
+	sprite.sprite_frames = _pirate_frames
+	sprite.animation = "walk_down"
+	sprite.position = Vector2(0, -8) # feet at the node's world position
+	if id != _my_id:
+		sprite.modulate = Color(0.85, 0.95, 1.0) # subtle tint to spot strangers
+	node.add_child(sprite)
 
 	var label := Label.new()
 	label.text = pirate_name
-	label.position = Vector2(-60, -44)
+	label.position = Vector2(-60, -32)
 	label.custom_minimum_size = Vector2(120, 0)
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 8)
+	label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+	label.add_theme_constant_override("outline_size", 3)
 	node.add_child(label)
 
 	_players.add_child(node)

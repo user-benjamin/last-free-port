@@ -1,32 +1,40 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=5 format=3]
 
 [ext_resource type="Script" path="res://scenes/game/game.gd" id="1_game"]
+[ext_resource type="Shader" path="res://scenes/game/water.gdshader" id="2_water"]
+[ext_resource type="Texture2D" path="res://assets/island.png" id="3_island"]
+[ext_resource type="Texture2D" path="res://assets/dock.png" id="4_dock"]
+
+[sub_resource type="ShaderMaterial" id="water_mat"]
+shader = ExtResource("2_water")
 
 [node name="Game" type="Node2D"]
 script = ExtResource("1_game")
 
 [node name="Water" type="ColorRect" parent="."]
+material = SubResource("water_mat")
 offset_left = -2000.0
 offset_top = -2000.0
 offset_right = 3280.0
 offset_bottom = 2720.0
-color = Color(0.03, 0.07, 0.1, 1)
 
-[node name="Island" type="ColorRect" parent="."]
-offset_right = 1280.0
-offset_bottom = 720.0
-color = Color(0.72, 0.64, 0.45, 1)
+[node name="Island" type="Sprite2D" parent="."]
+texture = ExtResource("3_island")
+centered = false
 
-[node name="Dock" type="ColorRect" parent="."]
-offset_left = 1280.0
-offset_top = 300.0
-offset_right = 1420.0
-offset_bottom = 360.0
-color = Color(0.35, 0.24, 0.13, 1)
+[node name="Dock" type="Sprite2D" parent="."]
+position = Vector2(1150, 302)
+texture = ExtResource("4_dock")
+centered = false
 
 [node name="Players" type="Node2D" parent="."]
+y_sort_enabled = true
 
 [node name="Camera" type="Camera2D" parent="."]
+zoom = Vector2(2, 2)
+
+[node name="Waves" type="AudioStreamPlayer" parent="."]
+volume_db = -10.0
 
 [node name="UI" type="CanvasLayer" parent="."]
 
