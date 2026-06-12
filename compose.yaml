@@ -1,0 +1,64 @@
+name: last-free-port
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: corsair
+      POSTGRES_PASSWORD: corsair-dev # local dev only; prod uses secrets
+      POSTGRES_DB: corsair
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U corsair -d corsair"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: server
+      args:
+        SERVICE: api
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      # Wired but unused until the API grows persistence (Phase 0 deliverable).
+      DATABASE_URL: postgres://corsair:corsair-dev@postgres:5432/corsair?sslmode=disable
+      VALKEY_ADDR: valkey:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+
+  game-server:
+    build:
+      context: server
+      args:
+        SERVICE: game-server
+    ports:
+      - "127.0.0.1:8081:8081"
+    environment:
+      DATABASE_URL: postgres://corsair:corsair-dev@postgres:5432/corsair?sslmode=disable
+      VALKEY_ADDR: valkey:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+
+volumes:
+  pgdata:

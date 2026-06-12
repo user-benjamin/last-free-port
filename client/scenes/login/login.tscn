@@ -1,0 +1,66 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scenes/login/login.gd" id="1_login"]
+[ext_resource type="Texture2D" path="res://assets/title_art.png" id="2_art"]
+
+[node name="Login" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_login")
+
+[node name="TitleArt" type="TextureRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+texture = ExtResource("2_art")
+expand_mode = 1
+stretch_mode = 6
+
+[node name="Center" type="CenterContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Form" type="VBoxContainer" parent="Center"]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="Title" type="Label" parent="Center/Form"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 44
+horizontal_alignment = 1
+text = "THE LAST FREE PORT"
+
+[node name="Subtitle" type="Label" parent="Center/Form"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.8, 0.78, 0.7, 1)
+horizontal_alignment = 1
+text = "No flag, no fortune."
+
+[node name="UsernameField" type="LineEdit" parent="Center/Form"]
+layout_mode = 2
+custom_minimum_size = Vector2(340, 0)
+placeholder_text = "Your pirate name"
+alignment = 1
+
+[node name="SetSailButton" type="Button" parent="Center/Form"]
+layout_mode = 2
+text = "Set Sail"
+
+[node name="Status" type="Label" parent="Center/Form"]
+layout_mode = 2
+custom_minimum_size = Vector2(380, 0)
+horizontal_alignment = 1
+autowrap_mode = 2
+
+[node name="LoginRequest" type="HTTPRequest" parent="."]

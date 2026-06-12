@@ -1,0 +1,13 @@
+# Godot
+client/.godot/
+
+# Go
+server/bin/
+
+# Local environment
+.env
+.DS_Store
+
+# Per-developer editor config
+.vscode/
+.idea/

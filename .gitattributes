@@ -1,0 +1,6 @@
+client/assets/**/*.wav filter=lfs diff=lfs merge=lfs -text
+client/assets/**/*.ogg filter=lfs diff=lfs merge=lfs -text
+client/assets/**/*.png filter=lfs diff=lfs merge=lfs -text
+client/assets/**/*.jpg filter=lfs diff=lfs merge=lfs -text
+client/assets/**/*.webp filter=lfs diff=lfs merge=lfs -text
+client/assets/**/*.ogv filter=lfs diff=lfs merge=lfs -text
