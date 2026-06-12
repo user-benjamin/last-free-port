@@ -18,6 +18,8 @@ const (
 	TypeError      = "error"
 	TypeMoveIntent = "move_intent"
 	TypeState      = "state"
+	TypeTalkIntent = "talk_intent"
+	TypeDialogue   = "dialogue"
 )
 
 // Hello is the first message a client sends after connecting.
@@ -55,11 +57,34 @@ type PlayerState struct {
 	Y    float64 `json:"y"`
 }
 
+// NPCState is one NPC's authoritative position within a State.
+type NPCState struct {
+	ID   string  `json:"id"`
+	Name string  `json:"name"`
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+}
+
 // State is the world snapshot broadcast to every connected client each
 // tick. Full snapshots are fine at small player counts; delta encoding is
 // a YAGNI item until profiling says otherwise.
 type State struct {
 	Players []PlayerState `json:"players"`
+	NPCs    []NPCState    `json:"npcs"`
+}
+
+// TalkIntent asks to talk to an NPC. The server validates proximity — the
+// client can request, never assert, a conversation.
+type TalkIntent struct {
+	NPCID string `json:"npc_id"`
+}
+
+// Dialogue is one spoken NPC line. Tier 0 of the NPC system (proposal
+// §13.4): static lines from the content file, no AI involved.
+type Dialogue struct {
+	NPCID   string `json:"npc_id"`
+	NPCName string `json:"npc_name"`
+	Line    string `json:"line"`
 }
 
 // Error reports a protocol-level failure to the client.

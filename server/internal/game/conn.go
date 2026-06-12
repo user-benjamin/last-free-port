@@ -19,10 +19,23 @@ import (
 // Server accepts WebSocket connections and attaches them to the Hub.
 type Server struct {
 	hub *Hub
+	// spawn is injectable so tests can place players deterministically.
+	spawn func() (float64, float64)
 }
 
 func NewServer() *Server {
-	return &Server{hub: NewHub()}
+	npcs, err := loadNPCs()
+	if err != nil {
+		// Content is compiled in: if it's invalid, the binary is defective
+		// and must not start. TestEmbeddedContentLoads catches this in CI
+		// before it can ship.
+		panic(err)
+	}
+	return &Server{hub: NewHub(npcs), spawn: randomSpawn}
+}
+
+func randomSpawn() (float64, float64) {
+	return randomCoord(WorldW), randomCoord(WorldH)
 }
 
 // HandleWS runs one player's connection: handshake, then a read pump
@@ -78,6 +91,12 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 				continue // garbage in, nothing out
 			}
 			s.hub.moves <- moveReq{id: p.id, dx: intent.DX, dy: intent.DY}
+		case protocol.TypeTalkIntent:
+			var intent protocol.TalkIntent
+			if err := json.Unmarshal(env.Data, &intent); err != nil {
+				continue
+			}
+			s.hub.talks <- talkReq{playerID: p.id, npcID: intent.NPCID}
 		default:
 			// Unknown types are logged and ignored so old clients don't
 			// break the session when the protocol grows.
@@ -112,11 +131,12 @@ func (s *Server) handshake(ctx context.Context, conn *websocket.Conn) (*player, 
 		return nil, false
 	}
 
+	x, y := s.spawn()
 	p := &player{
 		id:   newPlayerID(),
 		name: hello.Name,
-		x:    randomCoord(WorldW),
-		y:    randomCoord(WorldH),
+		x:    x,
+		y:    y,
 		send: make(chan []byte, 8),
 	}
 	slog.Info("player connected", "player_id", p.id, "name", p.name)
