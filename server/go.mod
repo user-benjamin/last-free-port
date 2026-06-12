@@ -1,4 +1,4 @@
-module lastfreeport
+module github.com/user-benjamin/last-free-port/server
 
 go 1.26
 

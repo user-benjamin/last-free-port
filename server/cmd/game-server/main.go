@@ -17,7 +17,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
-	"lastfreeport/internal/protocol"
+	"github.com/user-benjamin/last-free-port/server/internal/protocol"
 )
 
 func main() {
