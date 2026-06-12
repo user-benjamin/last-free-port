@@ -1,0 +1,19 @@
+{
+  "_readme": "NPC definitions and dialogue. Each talk returns ONE random line from the NPC's pool, so every line you add is new content players can encounter. Tone rules live in docs/proposal.md §4: grounded, no magic, no modern slang. See docs/lore/README.md for the contribution guide.",
+  "npcs": [
+    {
+      "id": "npc_silas",
+      "name": "Silas Crane",
+      "x": 1120,
+      "y": 332,
+      "lines": [
+        "New face. Keep your voice down and your coin close — this cove has ears.",
+        "You didn't hear it from me, but the Spaniards lost a strongbox off the north reef. Salvage crews start at dawn. Anyone diving tonight keeps what they find.",
+        "The Crown's offering pardons come autumn, they say. Half this cove will take one. The other half will hang the half that did.",
+        "See that wreck past the dock? Carried silver, the story goes. Carried fever too. Mind which one you bring back.",
+        "A captain in a black coat was asking after new faces last night. Asking nice. Too nice.",
+        "Storm season's coming. The smart ones are caching powder somewhere dry. The smarter ones already know where everyone else's cache is."
+      ]
+    }
+  ]
+}

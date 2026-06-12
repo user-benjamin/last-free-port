@@ -45,6 +45,18 @@ can never state a position, distance, or speed.
 { "type": "move_intent", "data": { "dx": 1.0, "dy": -0.5 } }
 ```
 
+### `talk_intent`
+
+Ask to talk to an NPC. The server validates that the player is within talk
+range (48 world units) of that NPC's authoritative position — the client's
+"press E" prompt is advisory only.
+
+```json
+{ "type": "talk_intent", "data": { "npc_id": "npc_silas" } }
+```
+
+Refusals come back as `error` with code `too_far` or `no_such_npc`.
+
 ## Server → Client
 
 ### `welcome`
@@ -86,9 +98,28 @@ absent from the snapshot.
 }
 ```
 
+### `dialogue`
+
+One NPC line, in reply to a valid `talk_intent`. Tier 0 of the NPC system
+(proposal §13.4): a random line from the NPC's pool in
+`server/internal/game/npcs.json`.
+
+```json
+{
+  "type": "dialogue",
+  "data": {
+    "npc_id": "npc_silas",
+    "npc_name": "Silas Crane",
+    "line": "New face. Keep your voice down and your coin close — this cove has ears."
+  }
+}
+```
+
 ### `error`
 
-Protocol-level failure. The server closes the connection after sending.
+Protocol-level failure. During the handshake the server closes the
+connection after sending; in-session errors (e.g. `too_far`) are advisory
+and the session continues.
 
 ```json
 {

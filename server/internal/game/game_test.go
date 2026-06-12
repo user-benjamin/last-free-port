@@ -22,6 +22,34 @@ func newTestServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
+// newTestServerAt pins spawn position and NPC roster for deterministic
+// proximity tests.
+func newTestServerAt(t *testing.T, x, y float64, npcs []NPC) *httptest.Server {
+	t.Helper()
+	gs := &Server{
+		hub:   NewHub(npcs),
+		spawn: func() (float64, float64) { return x, y },
+	}
+	srv := httptest.NewServer(http.HandlerFunc(gs.HandleWS))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// readUntilType skips snapshots and other traffic until a message of the
+// wanted type arrives.
+func readUntilType(t *testing.T, ctx context.Context, conn *websocket.Conn, wanted string) protocol.Envelope {
+	t.Helper()
+	for {
+		var env protocol.Envelope
+		if err := wsjson.Read(ctx, conn, &env); err != nil {
+			t.Fatalf("read (waiting for %q): %v", wanted, err)
+		}
+		if env.Type == wanted {
+			return env
+		}
+	}
+}
+
 func dial(t *testing.T, ctx context.Context, srv *httptest.Server, name string) (*websocket.Conn, protocol.Welcome) {
 	t.Helper()
 	url := "ws" + strings.TrimPrefix(srv.URL, "http")
@@ -144,6 +172,77 @@ func TestMovementIsServerAuthoritative(t *testing.T) {
 		if delta := p.X - welcome.SpawnX; delta > MoveSpeed {
 			t.Errorf("moved %f units in under a second — speed not clamped", delta)
 		}
+	}
+}
+
+func TestEmbeddedContentLoads(t *testing.T) {
+	npcs, err := loadNPCs()
+	if err != nil {
+		t.Fatalf("embedded npcs.json is invalid: %v", err)
+	}
+	if len(npcs) == 0 {
+		t.Fatal("expected at least one NPC in npcs.json")
+	}
+}
+
+func TestNPCsAppearInSnapshots(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	npc := NPC{ID: "npc_test", Name: "Testy", X: 100, Y: 100, Lines: []string{"arr"}}
+	srv := newTestServerAt(t, 500, 500, []NPC{npc})
+
+	conn, _ := dial(t, ctx, srv, "watcher")
+	readStateUntil(t, ctx, conn, func(s protocol.State) bool {
+		for _, n := range s.NPCs {
+			if n.ID == "npc_test" && n.X == 100 && n.Y == 100 {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func TestTalkInRange(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	npc := NPC{ID: "npc_test", Name: "Testy", X: 100, Y: 100, Lines: []string{"arr", "yo ho"}}
+	srv := newTestServerAt(t, 110, 100, []NPC{npc}) // 10 units away
+
+	conn, _ := dial(t, ctx, srv, "talker")
+	intent, _ := json.Marshal(protocol.TalkIntent{NPCID: "npc_test"})
+	if err := wsjson.Write(ctx, conn, protocol.Envelope{Type: protocol.TypeTalkIntent, Data: intent}); err != nil {
+		t.Fatalf("send talk: %v", err)
+	}
+
+	env := readUntilType(t, ctx, conn, protocol.TypeDialogue)
+	var d protocol.Dialogue
+	if err := json.Unmarshal(env.Data, &d); err != nil {
+		t.Fatalf("decode dialogue: %v", err)
+	}
+	if d.NPCName != "Testy" || d.Line == "" {
+		t.Errorf("unexpected dialogue: %+v", d)
+	}
+}
+
+func TestTalkOutOfRangeIsRefused(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	npc := NPC{ID: "npc_test", Name: "Testy", X: 100, Y: 100, Lines: []string{"arr"}}
+	srv := newTestServerAt(t, 600, 600, []NPC{npc}) // far across the island
+
+	conn, _ := dial(t, ctx, srv, "shouter")
+	intent, _ := json.Marshal(protocol.TalkIntent{NPCID: "npc_test"})
+	if err := wsjson.Write(ctx, conn, protocol.Envelope{Type: protocol.TypeTalkIntent, Data: intent}); err != nil {
+		t.Fatalf("send talk: %v", err)
+	}
+
+	env := readUntilType(t, ctx, conn, protocol.TypeError)
+	var e protocol.Error
+	if err := json.Unmarshal(env.Data, &e); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if e.Code != "too_far" {
+		t.Errorf("expected too_far, got %q", e.Code)
 	}
 }
 

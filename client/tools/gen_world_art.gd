@@ -301,31 +301,31 @@ const LEFT_1 := [
 	"................",
 ]
 
-func _frame_image(rows: Array) -> Image:
+func _frame_image(rows: Array, palette: Dictionary) -> Image:
 	var img := Image.create(16, 16, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
 	for y in 16:
 		var row: String = rows[y]
 		for x in 16:
 			var ch := row[x]
-			if PALETTE.has(ch):
-				img.set_pixel(x, y, PALETTE[ch])
+			if palette.has(ch):
+				img.set_pixel(x, y, palette[ch])
 	return img
 
-func _gen_pirate_sheet() -> void:
+func _gen_sheet(palette: Dictionary, path: String) -> void:
 	var sheet := Image.create(32, 64, false, Image.FORMAT_RGBA8)
 	sheet.fill(Color(0, 0, 0, 0))
 
-	var left0 := _frame_image(LEFT_0)
-	var left1 := _frame_image(LEFT_1)
+	var left0 := _frame_image(LEFT_0, palette)
+	var left1 := _frame_image(LEFT_1, palette)
 	var right0 := left0.duplicate()
 	var right1 := left1.duplicate()
 	right0.flip_x()
 	right1.flip_x()
 
 	var frames := [
-		[_frame_image(DOWN_0), _frame_image(DOWN_1)],
-		[_frame_image(UP_0), _frame_image(UP_1)],
+		[_frame_image(DOWN_0, palette), _frame_image(DOWN_1, palette)],
+		[_frame_image(UP_0, palette), _frame_image(UP_1, palette)],
 		[left0, left1],
 		[right0, right1],
 	]
@@ -333,8 +333,21 @@ func _gen_pirate_sheet() -> void:
 		for col in 2:
 			sheet.blit_rect(frames[row][col], Rect2i(0, 0, 16, 16), Vector2i(col * 16, row * 16))
 
-	var err := sheet.save_png("res://assets/pirate_sheet.png")
-	print("pirate_sheet.png: ", error_string(err))
+	var err := sheet.save_png(path)
+	print(path.get_file(), ": ", error_string(err))
+
+func _gen_pirate_sheet() -> void:
+	_gen_sheet(PALETTE, "res://assets/pirate_sheet.png")
+
+	# NPCs get a palette swap — green headscarf, brown coat — so they read
+	# as locals, not players, at a glance.
+	var npc_palette := PALETTE.duplicate()
+	npc_palette["R"] = Color(0.24, 0.45, 0.28)
+	npc_palette["r"] = Color(0.16, 0.32, 0.19)
+	npc_palette["W"] = Color(0.46, 0.34, 0.24)
+	npc_palette["w"] = Color(0.36, 0.26, 0.18)
+	npc_palette["N"] = Color(0.25, 0.23, 0.2)
+	_gen_sheet(npc_palette, "res://assets/npc_sheet.png")
 
 # --- dock -------------------------------------------------------------------
 
