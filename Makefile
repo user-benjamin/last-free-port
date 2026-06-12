@@ -32,5 +32,7 @@ dev-server: ## Run game-server natively for fast iteration (stop the container f
 psql: ## Open a psql shell against the dev database
 	docker compose exec postgres psql -U corsair corsair
 
-art: ## Regenerate the placeholder title art
+art: ## Regenerate all generated art and audio
 	godot --headless --path client -s res://tools/gen_title_art.gd
+	godot --headless --path client -s res://tools/gen_world_art.gd
+	python3 client/tools/gen_waves.py
