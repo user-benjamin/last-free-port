@@ -34,11 +34,23 @@ First message after connecting. Phase 0 placeholder — will be replaced by a
 { "type": "hello", "data": { "name": "deckhand" } }
 ```
 
+### `move_intent`
+
+The held movement direction, sent whenever it changes (including release →
+zero). Components are -1..1; the server clamps the vector to unit length
+and integrates position itself at its own tick rate and speed — the client
+can never state a position, distance, or speed.
+
+```json
+{ "type": "move_intent", "data": { "dx": 1.0, "dy": -0.5 } }
+```
+
 ## Server → Client
 
 ### `welcome`
 
-Reply to a valid `hello`. The session is live after this.
+Reply to a valid `hello`. The session is live after this. Includes the
+spawn position and world bounds.
 
 ```json
 {
@@ -46,7 +58,30 @@ Reply to a valid `hello`. The session is live after this.
   "data": {
     "player_id": "f3a91c0d22b04e1f",
     "server_time": "2026-06-11T17:00:00Z",
-    "motd": "No flag, no fortune. Welcome to the cove."
+    "motd": "No flag, no fortune. Welcome to the cove.",
+    "spawn_x": 512.0,
+    "spawn_y": 304.0,
+    "world_w": 1280.0,
+    "world_h": 720.0
+  }
+}
+```
+
+### `state`
+
+The authoritative world snapshot, broadcast to every connected player at
+20Hz. Full snapshots (not deltas) — fine at small player counts. Clients
+render by interpolating toward these positions and must remove any player
+absent from the snapshot.
+
+```json
+{
+  "type": "state",
+  "data": {
+    "players": [
+      { "id": "f3a91c0d22b04e1f", "name": "anne", "x": 520.4, "y": 304.0 },
+      { "id": "8c2e51b09a77d3e0", "name": "bart", "x": 700.0, "y": 412.8 }
+    ]
   }
 }
 ```

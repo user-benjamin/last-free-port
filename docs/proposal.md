@@ -629,6 +629,11 @@ nemesis interactions
 The game starts as a simple containerized multiplayer application on one VPS.
 This is mostly a 3-tier web application with one extra component: an authoritative game server.
 14.0 Locked Stack Decisions (2026-06-11)
+Presentation: 2D top-down (Stardew/Core Keeper shape)
+chosen over 3D low-poly for time-to-playable, solo art scope, and browser export
+the server simulation is dimension-blind (coordinates only), so this is a client-side decision
+base building becomes grid/tile placement, which fits the server-authoritative object model unchanged
+
 Client engine: Godot 4 (standard build, GDScript)
 free and open source, lightweight, fast solo iteration
 exports desktop and browser builds from the same project, which defers the distribution decision
