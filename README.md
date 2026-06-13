@@ -53,7 +53,38 @@ deploy/   Terraform and deployment tooling (Phase 1)
 docs/     Proposal, protocol, future ADRs
 ```
 
-## Roadmap
+## Status
 
-Phase 0 (current): local Compose stack, hello/welcome handshake, login stub.
-See proposal §20 for the full phase plan and §21 for the YAGNI guardrails.
+Playable today, locally: log in, walk a shared cove with other players
+(server-authoritative movement at 20Hz), and talk to Silas Crane, the
+smuggler at the dock. Generated 2D art and ambient sea audio. Postgres,
+Valkey, and migrations run as part of the Compose stack.
+
+## Development priorities
+
+In order. Each milestone is independently shippable; dates are targets for
+a part-time project, not promises.
+
+1. **The cove remembers you** (~late Jun) — gatherable driftwood, inventory
+   persisted in Postgres against your stable user id. First playtest demo.
+2. **Lock the doors** (~early Jul) — argon2id passwords and WebSocket
+   origin lockdown, deliberately *before* any public endpoint exists.
+   Crafting v1 rides along.
+3. **Remote play** (~mid Jul) — Phase 1 infrastructure: Terraform-managed
+   Hetzner VPS, Caddy TLS, GHCR images built by CI, off-machine backups
+   with a tested restore. A friend connects from their own house.
+4. **Base building v1** (~early Aug) — first placeable, persistent objects.
+   Needs a design pass before code.
+
+Deliberately not being built yet (proposal §21): the AI npc-director,
+minigames, ship combat, factions, and anything Kubernetes-shaped.
+Complexity is added only when pain proves it necessary.
+
+### Working principles
+
+- Trunk-based: short-lived branches, small PRs, `main` always deployable
+- The client sends *intent*, never truth — all rules live in `server/`
+- Every gameplay feature starts as a message type in [docs/protocol.md](docs/protocol.md)
+- Every backend milestone ships alongside a visible, playable payoff
+- Story and dialogue are data, not code — see [docs/lore/README.md](docs/lore/README.md)
+  to contribute writing without touching Go or Godot
