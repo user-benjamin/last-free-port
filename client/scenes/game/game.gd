@@ -17,7 +17,7 @@ const LERP_RATE := 12.0
 const TALK_RANGE := 48.0
 
 var _socket := WebSocketPeer.new()
-var _hello_sent := false
+var _join_sent := false
 var _my_id := ""
 var _last_sent_dir := Vector2.ZERO
 var _nodes: Dictionary = {}      # player_id -> Node2D
@@ -88,9 +88,10 @@ func _process(delta: float) -> void:
 	_socket.poll()
 	match _socket.get_ready_state():
 		WebSocketPeer.STATE_OPEN:
-			if not _hello_sent:
-				_send({"type": "hello", "data": {"name": Session.username}})
-				_hello_sent = true
+			if not _join_sent:
+				# Identity comes from the ticket, not from anything we claim.
+				_send({"type": "join", "data": {"ticket": Session.ticket}})
+				_join_sent = true
 			while _socket.get_available_packet_count() > 0:
 				_handle_packet(_socket.get_packet())
 			_send_movement()

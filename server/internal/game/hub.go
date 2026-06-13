@@ -33,9 +33,13 @@ const (
 )
 
 type player struct {
-	id   string
-	name string
-	x, y float64
+	id string
+	// userID is the stable Postgres identity from the redeemed ticket —
+	// what persistent state (inventory, bases) will key on. id is the
+	// per-session presence; userID is the account.
+	userID string
+	name   string
+	x, y   float64
 	// dx/dy are the player's current held direction, already clamped to
 	// unit length. Applied every tick until a new MoveIntent replaces it.
 	dx, dy float64

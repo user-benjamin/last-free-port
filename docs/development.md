@@ -67,7 +67,10 @@ make dev-server                   # Ctrl+C, edit, re-run
 make up                           # back to containers when done
 ```
 
-Postgres and Valkey always stay in containers. Run `make test` before
+Postgres and Valkey always stay in containers. Database migrations run
+automatically as a one-shot `migrate` service every `make up` — to add
+schema, drop a numbered `.up.sql`/`.down.sql` pair in `server/migrations/`
+and `make up` applies it. Run `make test` before
 considering a server change done.
 
 ## Watching state

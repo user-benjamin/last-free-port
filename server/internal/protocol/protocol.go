@@ -13,7 +13,7 @@ type Envelope struct {
 
 // Message types.
 const (
-	TypeHello      = "hello"
+	TypeJoin       = "join"
 	TypeWelcome    = "welcome"
 	TypeError      = "error"
 	TypeMoveIntent = "move_intent"
@@ -22,14 +22,14 @@ const (
 	TypeDialogue   = "dialogue"
 )
 
-// Hello is the first message a client sends after connecting.
-// It will be replaced by a join message carrying an API-issued session
-// ticket once the auth flow lands (proposal §16).
-type Hello struct {
-	Name string `json:"name"`
+// Join is the first message a client sends after connecting: a single-use
+// session ticket issued by the API (proposal §16). The client never states
+// its own identity — the name and user id come out of redeeming the ticket.
+type Join struct {
+	Ticket string `json:"ticket"`
 }
 
-// Welcome is the server's reply to a valid Hello.
+// Welcome is the server's reply to a valid Join.
 type Welcome struct {
 	PlayerID   string  `json:"player_id"`
 	ServerTime string  `json:"server_time"`
