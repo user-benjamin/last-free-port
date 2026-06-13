@@ -24,14 +24,17 @@ Every message in both directions:
 
 ## Client → Server
 
-### `hello`
+### `join`
 
-First message after connecting. Phase 0 placeholder — will be replaced by a
-`join` message carrying a short-lived session ticket issued by the API
-(proposal §16).
+First message after connecting: a single-use session ticket issued by the
+API at login (proposal §16). The client never states its own identity — the
+username and user id come out of the server redeeming the ticket against
+Valkey (atomic `GETDEL`: 30s TTL, exactly one redemption wins). Failures
+come back as `error` with code `bad_ticket` or `auth_unavailable`, and the
+connection closes.
 
 ```json
-{ "type": "hello", "data": { "name": "deckhand" } }
+{ "type": "join", "data": { "ticket": "9f2c4a81d6e07b35a1429c80ff6e2d11" } }
 ```
 
 ### `move_intent`
