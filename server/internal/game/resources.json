@@ -1,0 +1,11 @@
+{
+  "_readme": "Gatherable resource nodes. Each is a fixed spawn point on the island; gathering it grants one of its item type and puts it on a respawn cooldown (timing is per-type, set in resources.go). Positions are world coordinates (0..1280, 0..720); place driftwood along the sandy shore. See docs/lore/README.md.",
+  "nodes": [
+    { "id": "drift_1", "type": "driftwood", "x": 300, "y": 180 },
+    { "id": "drift_2", "type": "driftwood", "x": 980, "y": 200 },
+    { "id": "drift_3", "type": "driftwood", "x": 1050, "y": 520 },
+    { "id": "drift_4", "type": "driftwood", "x": 360, "y": 560 },
+    { "id": "drift_5", "type": "driftwood", "x": 640, "y": 130 },
+    { "id": "drift_6", "type": "driftwood", "x": 640, "y": 590 }
+  ]
+}

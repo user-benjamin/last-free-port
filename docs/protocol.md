@@ -60,12 +60,24 @@ range (48 world units) of that NPC's authoritative position — the client's
 
 Refusals come back as `error` with code `too_far` or `no_such_npc`.
 
+### `gather_intent`
+
+Ask to gather a resource node. The server validates proximity (48 world
+units) and that the node is currently available, then grants the item and
+persists it to Postgres. Refusals come back as `error` with code `too_far`,
+`depleted`, `no_such_node`, or `grant_failed`.
+
+```json
+{ "type": "gather_intent", "data": { "node_id": "drift_1" } }
+```
+
 ## Server → Client
 
 ### `welcome`
 
-Reply to a valid `hello`. The session is live after this. Includes the
-spawn position and world bounds.
+Reply to a valid `join`. The session is live after this. Includes the spawn
+position, world bounds, and the player's full inventory loaded from Postgres
+(item_type → quantity) — the moment a returning player gets their stuff back.
 
 ```json
 {
@@ -77,7 +89,8 @@ spawn position and world bounds.
     "spawn_x": 512.0,
     "spawn_y": 304.0,
     "world_w": 1280.0,
-    "world_h": 720.0
+    "world_h": 720.0,
+    "inventory": { "driftwood": 3 }
   }
 }
 ```
@@ -86,19 +99,35 @@ spawn position and world bounds.
 
 The authoritative world snapshot, broadcast to every connected player at
 20Hz. Full snapshots (not deltas) — fine at small player counts. Clients
-render by interpolating toward these positions and must remove any player
-absent from the snapshot.
+render by interpolating toward player positions, must remove any player
+absent from the snapshot, and toggle each resource node's visibility by its
+`available` flag (depleted nodes are hidden until they respawn).
 
 ```json
 {
   "type": "state",
   "data": {
     "players": [
-      { "id": "f3a91c0d22b04e1f", "name": "anne", "x": 520.4, "y": 304.0 },
-      { "id": "8c2e51b09a77d3e0", "name": "bart", "x": 700.0, "y": 412.8 }
+      { "id": "f3a91c0d22b04e1f", "name": "anne", "x": 520.4, "y": 304.0 }
+    ],
+    "npcs": [
+      { "id": "npc_silas", "name": "Silas Crane", "x": 1120.0, "y": 332.0 }
+    ],
+    "resources": [
+      { "id": "drift_1", "type": "driftwood", "x": 300.0, "y": 180.0, "available": true }
     ]
   }
 }
+```
+
+### `inventory`
+
+Sent after a successful gather: the item that changed and its new
+authoritative total. The client overwrites its displayed count with this —
+it never computes totals itself.
+
+```json
+{ "type": "inventory", "data": { "item_type": "driftwood", "quantity": 4 } }
 ```
 
 ### `dialogue`
@@ -127,8 +156,9 @@ and the session continues.
 ```json
 {
   "type": "error",
-  "data": { "code": "expected_hello", "message": "first message must be hello" }
+  "data": { "code": "too_far", "message": "you're not close enough to gather that" }
 }
 ```
 
-Current codes: `expected_hello`, `bad_hello`.
+Current codes: `expected_join`, `bad_join`, `bad_ticket`, `auth_unavailable`,
+`too_far`, `no_such_npc`, `depleted`, `no_such_node`, `grant_failed`.

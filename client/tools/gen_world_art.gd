@@ -28,6 +28,7 @@ func _init() -> void:
 	_gen_island()
 	_gen_pirate_sheet()
 	_gen_dock()
+	_gen_driftwood()
 	quit()
 
 # --- island ----------------------------------------------------------------
@@ -378,3 +379,45 @@ func _gen_dock() -> void:
 
 	var err := img.save_png("res://assets/dock.png")
 	print("dock.png: ", error_string(err))
+
+# --- driftwood --------------------------------------------------------------
+
+## A small pile of two crossed, weathered logs with darker end-grain. 24x16,
+## drawn centered so the client can place it directly on a node's position.
+func _gen_driftwood() -> void:
+	var w := 24
+	var h := 16
+	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+
+	var bark := Color(0.42, 0.33, 0.24)
+	var bark_dark := Color(0.30, 0.23, 0.16)
+	var grain := Color(0.55, 0.46, 0.34)
+
+	# Two logs as thick line segments, slightly crossed.
+	_log(img, Vector2(3, 11), Vector2(20, 8), 2.4, bark, bark_dark, grain)
+	_log(img, Vector2(4, 6), Vector2(19, 12), 2.0, bark.lightened(0.08), bark_dark, grain)
+
+	var err := img.save_png("res://assets/driftwood.png")
+	print("driftwood.png: ", error_string(err))
+
+## Draws a fat line from a to b: a rounded log of the given half-thickness,
+## shaded along the bottom, with bright end-grain caps at both ends. Writes
+## opaque pixels directly (unlike _blend, which refuses transparent targets).
+func _log(img: Image, a: Vector2, b: Vector2, r: float, top: Color, bottom: Color, cap: Color) -> void:
+	var steps := int(a.distance_to(b)) + 1
+	for i in steps + 1:
+		var p := a.lerp(b, float(i) / steps)
+		var is_end := i <= 1 or i >= steps - 1
+		for oy in range(-int(r) - 1, int(r) + 2):
+			var d := absf(oy)
+			if d > r:
+				continue
+			var x := int(round(p.x))
+			var y := int(round(p.y)) + oy
+			if x < 0 or x >= img.get_width() or y < 0 or y >= img.get_height():
+				continue
+			var c := top.lerp(bottom, d / r) # round shading top->bottom
+			if is_end:
+				c = cap
+			img.set_pixel(x, y, Color(c.r, c.g, c.b, 1.0))
