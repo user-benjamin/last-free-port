@@ -1,9 +1,10 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=6 format=3]
 
 [ext_resource type="Script" path="res://scenes/game/game.gd" id="1_game"]
 [ext_resource type="Shader" path="res://scenes/game/water.gdshader" id="2_water"]
 [ext_resource type="Texture2D" path="res://assets/island.png" id="3_island"]
 [ext_resource type="Texture2D" path="res://assets/dock.png" id="4_dock"]
+[ext_resource type="Texture2D" path="res://assets/driftwood.png" id="5_driftwood"]
 
 [sub_resource type="ShaderMaterial" id="water_mat"]
 shader = ExtResource("2_water")
@@ -27,6 +28,8 @@ position = Vector2(1150, 302)
 texture = ExtResource("4_dock")
 centered = false
 
+[node name="Resources" type="Node2D" parent="."]
+
 [node name="Players" type="Node2D" parent="."]
 y_sort_enabled = true
 
@@ -44,6 +47,19 @@ offset_top = 12.0
 offset_right = 944.0
 offset_bottom = 84.0
 text = "Casting off..."
+
+[node name="Inventory" type="Label" parent="UI"]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -220.0
+offset_top = 12.0
+offset_right = -16.0
+offset_bottom = 40.0
+grow_horizontal = 0
+theme_override_colors/font_color = Color(0.95, 0.88, 0.6, 1)
+horizontal_alignment = 2
+text = "Driftwood: 0"
 
 [node name="LeaveButton" type="Button" parent="UI"]
 anchors_preset = 2

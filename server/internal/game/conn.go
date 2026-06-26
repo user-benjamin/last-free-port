@@ -29,11 +29,12 @@ type TicketRedeemer interface {
 type Server struct {
 	hub     *Hub
 	tickets TicketRedeemer
+	inv     InventoryStore
 	// spawn is injectable so tests can place players deterministically.
 	spawn func() (float64, float64)
 }
 
-func NewServer(tickets TicketRedeemer) *Server {
+func NewServer(tickets TicketRedeemer, inv InventoryStore) *Server {
 	npcs, err := loadNPCs()
 	if err != nil {
 		// Content is compiled in: if it's invalid, the binary is defective
@@ -41,7 +42,16 @@ func NewServer(tickets TicketRedeemer) *Server {
 		// before it can ship.
 		panic(err)
 	}
-	return &Server{hub: NewHub(npcs), tickets: tickets, spawn: randomSpawn}
+	resources, err := loadResources()
+	if err != nil {
+		panic(err)
+	}
+	return &Server{
+		hub:     NewHub(npcs, resources, inv),
+		tickets: tickets,
+		inv:     inv,
+		spawn:   randomSpawn,
+	}
 }
 
 func randomSpawn() (float64, float64) {
@@ -107,6 +117,12 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			s.hub.talks <- talkReq{playerID: p.id, npcID: intent.NPCID}
+		case protocol.TypeGatherIntent:
+			var intent protocol.GatherIntent
+			if err := json.Unmarshal(env.Data, &intent); err != nil {
+				continue
+			}
+			s.hub.gathers <- gatherReq{playerID: p.id, nodeID: intent.NodeID}
 		default:
 			// Unknown types are logged and ignored so old clients don't
 			// break the session when the protocol grows.
@@ -156,6 +172,16 @@ func (s *Server) handshake(ctx context.Context, conn *websocket.Conn) (*player, 
 		return nil, false
 	}
 
+	// Load the returning player's inventory before admitting them. Runs on
+	// this connection's goroutine, so a slow query delays only this join,
+	// never the hub. A read failure isn't fatal — better to enter the cove
+	// with an empty bag shown than to be refused at the door.
+	items, err := s.inv.Load(hsCtx, user.UserID)
+	if err != nil {
+		slog.Error("inventory load failed", "user_id", user.UserID, "error", err)
+		items = map[string]int{}
+	}
+
 	x, y := s.spawn()
 	p := &player{
 		id:     newPlayerID(),
@@ -175,6 +201,7 @@ func (s *Server) handshake(ctx context.Context, conn *websocket.Conn) (*player, 
 		SpawnY:     p.y,
 		WorldW:     WorldW,
 		WorldH:     WorldH,
+		Inventory:  items,
 	})
 	if err != nil {
 		slog.Warn("write welcome failed", "player_id", p.id, "error", err)

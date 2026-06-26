@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,26 +19,65 @@ import (
 	"github.com/user-benjamin/last-free-port/server/internal/protocol"
 )
 
-// testEnv is a game server wired to an in-process Valkey (miniredis), so
-// every test exercises the real ticket Issue/Redeem path with no external
-// dependencies.
+// fakeInventory is an in-memory InventoryStore for tests, so the suite needs
+// no Postgres. It's mutex-guarded because Grant runs on the hub's async
+// persistence goroutine while Load runs on a connection goroutine.
+type fakeInventory struct {
+	mu    sync.Mutex
+	items map[string]map[string]int // userID -> itemType -> qty
+}
+
+func newFakeInventory() *fakeInventory {
+	return &fakeInventory{items: map[string]map[string]int{}}
+}
+
+func (f *fakeInventory) Load(_ context.Context, userID string) (map[string]int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[string]int{}
+	for k, v := range f.items[userID] {
+		out[k] = v
+	}
+	return out, nil
+}
+
+func (f *fakeInventory) Grant(_ context.Context, userID, itemType string, n int) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.items[userID] == nil {
+		f.items[userID] = map[string]int{}
+	}
+	f.items[userID][itemType] += n
+	return f.items[userID][itemType], nil
+}
+
+// testEnv is a game server wired to an in-process Valkey (miniredis) and a
+// fake inventory, so every test exercises the real ticket flow and gather
+// path with no external dependencies.
 type testEnv struct {
 	srv     *httptest.Server
 	tickets *auth.Tickets
+	inv     *fakeInventory
 }
 
 func newTestEnv(t *testing.T, spawnX, spawnY float64, npcs []NPC) *testEnv {
+	return newTestEnvFull(t, spawnX, spawnY, npcs, nil)
+}
+
+func newTestEnvFull(t *testing.T, spawnX, spawnY float64, npcs []NPC, resources []ResourceNode) *testEnv {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	tickets := auth.NewTickets(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
+	inv := newFakeInventory()
 	gs := &Server{
-		hub:     NewHub(npcs),
+		hub:     NewHub(npcs, resources, inv),
 		tickets: tickets,
+		inv:     inv,
 		spawn:   func() (float64, float64) { return spawnX, spawnY },
 	}
 	srv := httptest.NewServer(http.HandlerFunc(gs.HandleWS))
 	t.Cleanup(srv.Close)
-	return &testEnv{srv: srv, tickets: tickets}
+	return &testEnv{srv: srv, tickets: tickets, inv: inv}
 }
 
 func (e *testEnv) dialRaw(t *testing.T, ctx context.Context) *websocket.Conn {
@@ -308,4 +348,174 @@ func TestTalkOutOfRangeIsRefused(t *testing.T) {
 	if e.Code != "too_far" {
 		t.Errorf("expected too_far, got %q", e.Code)
 	}
+}
+
+func sendGather(t *testing.T, ctx context.Context, conn *websocket.Conn, nodeID string) {
+	t.Helper()
+	intent, _ := json.Marshal(protocol.GatherIntent{NodeID: nodeID})
+	if err := wsjson.Write(ctx, conn, protocol.Envelope{Type: protocol.TypeGatherIntent, Data: intent}); err != nil {
+		t.Fatalf("send gather: %v", err)
+	}
+}
+
+func expectError(t *testing.T, ctx context.Context, conn *websocket.Conn, wantCode string) {
+	t.Helper()
+	envlp := readUntilType(t, ctx, conn, protocol.TypeError)
+	var e protocol.Error
+	if err := json.Unmarshal(envlp.Data, &e); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if e.Code != wantCode {
+		t.Errorf("expected %q, got %q", wantCode, e.Code)
+	}
+}
+
+func TestEmbeddedResourcesLoad(t *testing.T) {
+	nodes, err := loadResources()
+	if err != nil {
+		t.Fatalf("embedded resources.json is invalid: %v", err)
+	}
+	if len(nodes) == 0 {
+		t.Fatal("expected at least one resource node in resources.json")
+	}
+}
+
+func TestResourceNodesAppearInSnapshot(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	node := ResourceNode{ID: "drift_test", Type: "driftwood", X: 100, Y: 100}
+	env := newTestEnvFull(t, 500, 500, nil, []ResourceNode{node})
+
+	conn, _ := env.join(t, ctx, "watcher")
+	readStateUntil(t, ctx, conn, func(s protocol.State) bool {
+		for _, n := range s.Resources {
+			if n.ID == "drift_test" && n.Available {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func TestGatherInRangeGrantsAndDepletes(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	node := ResourceNode{ID: "drift_test", Type: "driftwood", X: 100, Y: 100}
+	env := newTestEnvFull(t, 110, 100, nil, []ResourceNode{node}) // 10 units away
+
+	conn, _ := env.join(t, ctx, "gatherer")
+	sendGather(t, ctx, conn, "drift_test")
+
+	// The new authoritative total comes back as an inventory message.
+	envlp := readUntilType(t, ctx, conn, protocol.TypeInventory)
+	var inv protocol.Inventory
+	if err := json.Unmarshal(envlp.Data, &inv); err != nil {
+		t.Fatalf("decode inventory: %v", err)
+	}
+	if inv.ItemType != "driftwood" || inv.Quantity != 1 {
+		t.Errorf("expected driftwood=1, got %s=%d", inv.ItemType, inv.Quantity)
+	}
+
+	// And the node shows depleted in subsequent snapshots.
+	readStateUntil(t, ctx, conn, func(s protocol.State) bool {
+		for _, n := range s.Resources {
+			if n.ID == "drift_test" {
+				return !n.Available
+			}
+		}
+		return false
+	})
+}
+
+func TestGatherOutOfRangeRefused(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	node := ResourceNode{ID: "drift_test", Type: "driftwood", X: 100, Y: 100}
+	env := newTestEnvFull(t, 600, 600, nil, []ResourceNode{node}) // far away
+
+	conn, _ := env.join(t, ctx, "reacher")
+	sendGather(t, ctx, conn, "drift_test")
+	expectError(t, ctx, conn, "too_far")
+}
+
+func TestGatherDepletedRefused(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	node := ResourceNode{ID: "drift_test", Type: "driftwood", X: 100, Y: 100}
+	env := newTestEnvFull(t, 110, 100, nil, []ResourceNode{node})
+
+	conn, _ := env.join(t, ctx, "greedy")
+	sendGather(t, ctx, conn, "drift_test")
+	readUntilType(t, ctx, conn, protocol.TypeInventory) // first gather succeeds
+
+	sendGather(t, ctx, conn, "drift_test") // second, while depleted
+	expectError(t, ctx, conn, "depleted")
+}
+
+func TestGatherUnknownNodeRefused(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	env := newTestEnvFull(t, 100, 100, nil, nil)
+
+	conn, _ := env.join(t, ctx, "confused")
+	sendGather(t, ctx, conn, "no_such_node")
+	expectError(t, ctx, conn, "no_such_node")
+}
+
+// TestInventoryPersistsAcrossReconnect is the milestone in one test: gather,
+// disconnect, reconnect as the same account, and the welcome carries the item
+// back. (The same username yields the same user id via the ticket.)
+func TestInventoryPersistsAcrossReconnect(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	node := ResourceNode{ID: "drift_test", Type: "driftwood", X: 100, Y: 100}
+	env := newTestEnvFull(t, 110, 100, nil, []ResourceNode{node})
+
+	conn, welcome := env.join(t, ctx, "anne")
+	if len(welcome.Inventory) != 0 {
+		t.Fatalf("new player should start empty, got %v", welcome.Inventory)
+	}
+	sendGather(t, ctx, conn, "drift_test")
+	readUntilType(t, ctx, conn, protocol.TypeInventory) // ensure the grant landed
+	conn.Close(websocket.StatusNormalClosure, "")
+
+	// Reconnect as the same account.
+	_, welcome2 := env.join(t, ctx, "anne")
+	if welcome2.Inventory["driftwood"] != 1 {
+		t.Errorf("expected driftwood=1 after reconnect, got %v", welcome2.Inventory)
+	}
+}
+
+func TestResourceRespawns(t *testing.T) {
+	// Shorten driftwood's respawn for this test only; tests run serially so
+	// mutating the package var is safe with a deferred restore.
+	original := respawnByType["driftwood"]
+	respawnByType["driftwood"] = 50 * time.Millisecond
+	defer func() { respawnByType["driftwood"] = original }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	node := ResourceNode{ID: "drift_test", Type: "driftwood", X: 100, Y: 100}
+	env := newTestEnvFull(t, 110, 100, nil, []ResourceNode{node})
+
+	conn, _ := env.join(t, ctx, "patient")
+	sendGather(t, ctx, conn, "drift_test")
+	// Wait for depletion...
+	readStateUntil(t, ctx, conn, func(s protocol.State) bool {
+		for _, n := range s.Resources {
+			if n.ID == "drift_test" {
+				return !n.Available
+			}
+		}
+		return false
+	})
+	// ...then for the respawn.
+	readStateUntil(t, ctx, conn, func(s protocol.State) bool {
+		for _, n := range s.Resources {
+			if n.ID == "drift_test" {
+				return n.Available
+			}
+		}
+		return false
+	})
 }

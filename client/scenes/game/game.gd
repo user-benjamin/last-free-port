@@ -12,26 +12,33 @@ const LOGIN_SCENE := "res://scenes/login/login.tscn"
 ## speaks at 20Hz; we render at 60+fps, so we glide between snapshots.
 const LERP_RATE := 12.0
 
-## Mirrors the server's TalkRange. Client-side it only decides when to show
-## the prompt — the server re-checks distance on every talk_intent.
-const TALK_RANGE := 48.0
+## Mirrors the server's TalkRange/GatherRange (both 48). Client-side this only
+## decides when to show the prompt — the server re-checks distance on every
+## talk_intent and gather_intent.
+const INTERACT_RANGE := 48.0
+
+const DRIFTWOOD_TEX := preload("res://assets/driftwood.png")
 
 var _socket := WebSocketPeer.new()
 var _join_sent := false
 var _my_id := ""
 var _last_sent_dir := Vector2.ZERO
-var _nodes: Dictionary = {}      # player_id -> Node2D
-var _targets: Dictionary = {}    # player_id -> Vector2 (latest server position)
-var _npc_nodes: Dictionary = {}  # npc_id -> Node2D
-var _npc_names: Dictionary = {}  # npc_id -> String
-var _nearest_npc := ""           # npc_id within talk range, "" if none
+var _nodes: Dictionary = {}       # player_id -> Node2D
+var _targets: Dictionary = {}     # player_id -> Vector2 (latest server position)
+var _npc_nodes: Dictionary = {}   # npc_id -> Node2D
+var _npc_names: Dictionary = {}   # npc_id -> String
+var _res_nodes: Dictionary = {}   # node_id -> {sprite, pos, type, available}
+var _inventory: Dictionary = {}   # item_type -> quantity
+var _nearest := {}                # {} or {kind: "npc"|"node", id, label}
 
 @onready var _players: Node2D = $Players
+@onready var _resources_root: Node2D = $Resources
 @onready var _camera: Camera2D = $Camera
 @onready var _status: Label = $UI/Status
 @onready var _leave: Button = $UI/LeaveButton
 @onready var _waves: AudioStreamPlayer = $Waves
 @onready var _prompt: Label = $UI/Prompt
+@onready var _inventory_label: Label = $UI/Inventory
 @onready var _dialogue_panel: PanelContainer = $UI/DialoguePanel
 @onready var _dialogue_name: Label = $UI/DialoguePanel/Margin/VBox/NpcName
 @onready var _dialogue_line: Label = $UI/DialoguePanel/Margin/VBox/Line
@@ -153,6 +160,8 @@ func _handle_packet(packet: PackedByteArray) -> void:
 			_on_state(msg.get("data", {}))
 		"dialogue":
 			_on_dialogue(msg.get("data", {}))
+		"inventory":
+			_on_inventory(msg.get("data", {}))
 		"error":
 			_status.text = "Server error: %s" % JSON.stringify(msg.get("data"))
 		_:
@@ -164,7 +173,23 @@ func _on_welcome(data: Dictionary) -> void:
 	print("[client] welcome: player_id=%s motd=%s" % [_my_id, data.get("motd")])
 	var spawn := Vector2(data.get("spawn_x", 0.0), data.get("spawn_y", 0.0))
 	_camera.position = spawn
-	_status.text = "%s\nWASD or arrows to walk the cove." % data.get("motd")
+	_status.text = "%s\nWASD to walk, E to interact." % data.get("motd")
+
+	# Returning players get their stuff back here — this is the payoff.
+	_inventory.clear()
+	for item: String in data.get("inventory", {}):
+		_inventory[item] = int(data["inventory"][item])
+	_update_inventory_label()
+
+func _on_inventory(data: Dictionary) -> void:
+	var item: String = data.get("item_type", "")
+	if item != "":
+		_inventory[item] = int(data.get("quantity", 0))
+		_update_inventory_label()
+		print("[client] inventory: %s=%d" % [item, _inventory[item]])
+
+func _update_inventory_label() -> void:
+	_inventory_label.text = "Driftwood: %d" % int(_inventory.get("driftwood", 0))
 
 ## The server snapshot is the truth: create nodes for new players, update
 ## targets for known ones, remove anyone no longer present.
@@ -187,11 +212,36 @@ func _on_state(data: Dictionary) -> void:
 			_npc_names[nid] = npc_name
 			print("[client] local sighted: %s" % npc_name)
 
+	for res: Dictionary in data.get("resources", []):
+		_sync_resource(res)
+
 	for id: String in _nodes.keys():
 		if not seen.has(id):
 			_nodes[id].queue_free()
 			_nodes.erase(id)
 			_targets.erase(id)
+
+## Resource nodes are fixed spawn points (never removed), so we create the
+## sprite once and then just toggle visibility as the server reports the node
+## depleting and respawning.
+func _sync_resource(res: Dictionary) -> void:
+	var id: String = res.get("id", "")
+	if id == "":
+		return
+	var available: bool = res.get("available", true)
+	if not _res_nodes.has(id):
+		var pos := Vector2(res.get("x", 0.0), res.get("y", 0.0))
+		var sprite := Sprite2D.new()
+		sprite.texture = DRIFTWOOD_TEX
+		sprite.position = pos
+		_resources_root.add_child(sprite)
+		_res_nodes[id] = {
+			"sprite": sprite, "pos": pos, "type": res.get("type", "driftwood"),
+			"available": available,
+		}
+	var entry: Dictionary = _res_nodes[id]
+	entry["available"] = available
+	(entry["sprite"] as Sprite2D).visible = available
 
 func _spawn_node(id: String, pirate_name: String, at: Vector2) -> void:
 	var node := _make_actor(pirate_name, at, _pirate_frames, Color.WHITE)
@@ -226,30 +276,46 @@ func _make_actor(display_name: String, at: Vector2, frames: SpriteFrames, label_
 	_players.add_child(node)
 	return node
 
-## Interact (E): close an open conversation, otherwise greet whoever's near.
-## The server decides whether the conversation actually happens.
+## Interact (E): close an open conversation, otherwise act on whatever's
+## nearest — talk to an NPC or gather a node. The server validates either way.
 func _on_interact() -> void:
 	if _dialogue_panel.visible:
 		_dialogue_panel.visible = false
 		return
-	if _nearest_npc != "":
-		_send({"type": "talk_intent", "data": {"npc_id": _nearest_npc}})
+	if _nearest.is_empty():
+		return
+	match _nearest.kind:
+		"npc":
+			_send({"type": "talk_intent", "data": {"npc_id": _nearest.id}})
+		"node":
+			_send({"type": "gather_intent", "data": {"node_id": _nearest.id}})
 
+## Each frame, find the single nearest interactable (NPC or available node)
+## within range and describe it for the prompt.
 func _update_prompt() -> void:
-	_nearest_npc = ""
+	_nearest = {}
 	if _nodes.has(_my_id):
 		var me: Vector2 = _nodes[_my_id].position
-		var best := TALK_RANGE
+		var best := INTERACT_RANGE
 		for id: String in _npc_nodes:
 			var d := me.distance_to(_npc_nodes[id].position)
 			if d <= best:
 				best = d
-				_nearest_npc = id
-	_prompt.visible = _nearest_npc != "" and not _dialogue_panel.visible
+				_nearest = {"kind": "npc", "id": id, "label": "talk to %s" % _npc_names[id]}
+		for id: String in _res_nodes:
+			var entry: Dictionary = _res_nodes[id]
+			if not entry.available:
+				continue
+			var d := me.distance_to(entry.pos)
+			if d <= best:
+				best = d
+				_nearest = {"kind": "node", "id": id, "label": "gather %s" % entry.type}
+
+	_prompt.visible = not _nearest.is_empty() and not _dialogue_panel.visible
 	if _prompt.visible:
-		_prompt.text = "E — talk to %s" % _npc_names[_nearest_npc]
-	# Walking out of earshot ends the conversation.
-	if _dialogue_panel.visible and _nearest_npc == "":
+		_prompt.text = "E — %s" % _nearest.label
+	# Walking away from an NPC ends an open conversation.
+	if _dialogue_panel.visible and (_nearest.is_empty() or _nearest.kind != "npc"):
 		_dialogue_panel.visible = false
 
 func _on_dialogue(data: Dictionary) -> void:
