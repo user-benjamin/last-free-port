@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -45,7 +46,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	srv := game.NewServer(auth.NewTickets(rdb), inventory.NewStore(pool))
+	// GAME_ALLOWED_ORIGINS is a comma-separated allowlist of browser Origin
+	// host patterns (e.g. "play.example.com,127.0.0.1:*"). Unset means
+	// desktop and same-host clients only — see HandleWS.
+	allowedOrigins := splitAndTrim(os.Getenv("GAME_ALLOWED_ORIGINS"))
+
+	srv := game.NewServer(auth.NewTickets(rdb), inventory.NewStore(pool), allowedOrigins)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -65,4 +71,16 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// splitAndTrim turns "a, b ,, c" into ["a","b","c"], dropping empty entries
+// so a trailing comma or an unset var yields an empty slice, not [""].
+func splitAndTrim(csv string) []string {
+	var out []string
+	for _, part := range strings.Split(csv, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

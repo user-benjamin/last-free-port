@@ -53,9 +53,21 @@ custom_minimum_size = Vector2(340, 0)
 placeholder_text = "Your pirate name"
 alignment = 1
 
+[node name="PasswordField" type="LineEdit" parent="Center/Form"]
+layout_mode = 2
+custom_minimum_size = Vector2(340, 0)
+placeholder_text = "Password (8+ characters)"
+alignment = 1
+secret = true
+
 [node name="SetSailButton" type="Button" parent="Center/Form"]
 layout_mode = 2
 text = "Set Sail"
+
+[node name="RegisterButton" type="Button" parent="Center/Form"]
+layout_mode = 2
+flat = true
+text = "New here? Register a pirate"
 
 [node name="Status" type="Label" parent="Center/Form"]
 layout_mode = 2
