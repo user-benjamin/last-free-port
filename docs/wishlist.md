@@ -53,8 +53,8 @@ are the two that matter most for "worth showing."
 | Feature | Status | Notes |
 |---|---|---|
 | **Inventory** | ✅ Done | Persists in Postgres; toggle panel + legend ([PR #9](https://github.com/user-benjamin/last-free-port/pull/9)) 🎉 |
-| **Build / crafting mechanics** | 📐 Planned | Design below. The next big playable beat. |
-| **Skill tree / level progression** | 🌫️ Someday | How does a pirate "level"? Reputation and gear may carry this instead of XP bars — needs a design pass. |
+| **Build / crafting mechanics** | 📐 Planned | The next big playable beat. Full design in **[crafting.md](crafting.md)** (workstations, recipe tree, progression, durability). |
+| **Skill tree / level progression** | 📐 Planned | Resolved: **use-based proficiency** (you get better at what you do), not an XP tree — see [crafting.md](crafting.md#progression--four-axes-no-skill-tree). |
 | **Combat** | 🌫️ Someday | Grounded and dangerous: melee, pistols, boarding (proposal §11.5). Big system; gated behind the make/build loop being fun first. |
 | **Minigames** | 🌫️ Someday | A framework, not one-offs (proposal §12). **First instance arrives early** as the campfire fire-lighting game — a tiny, contained proof. |
 
@@ -101,40 +101,15 @@ cloud hosting, since it shapes the DNS/Caddy routing.
 
 ---
 
-## Crafting v1 — design
+## Crafting v1 — first slice
 
-The first real "make something" loop, and the next playable beat after the
-inventory panel. Everything is **server-authoritative**: the client sends a
-`craft_intent`, the server checks you have the inputs, debits them, credits the
-output, and persists — exactly like gather (proposal §11.3).
+> The full crafting & progression design — workstations, the recipe tree, the
+> four progression axes, durability, and fuel — now lives in
+> **[crafting.md](crafting.md)**. This is just the *first slice* we'd ship.
 
-### Resources
-
-What exists vs. what this needs:
-
-| Resource | In game today? | Action |
-|---|---|---|
-| **Driftwood** | ✅ Yes | Gatherable along the shore |
-| **Scrap iron** | ❌ Not yet | Add gatherable nodes (rusted wreck-iron on the beach) |
-| **Stone** | ❌ Not yet | Add gatherable nodes (rocks at the cove's edges) |
-
-> Adding a resource is a small, deliberate change: a node type in
-> `resources.json` plus a respawn duration in `resources.go`. The inventory
-> panel already renders unknown item types gracefully, so new resources appear
-> with no client change.
-
-### Recipes (v1)
-
-| Output | Recipe | Purpose |
-|---|---|---|
-| 🔨 **Hammer** | `driftwood + scrap iron` | A tool — gateway to building & repair |
-| 🔥 **Campfire** | `stone + driftwood` | A *placed* object that starts the cooking loop |
-
-### The campfire loop — where crafting meets minigame meets cooking
-
-This is the satisfying chain that makes crafting feel alive, and it's where the
-**first minigame** earns its place (small and contained, proving the framework
-from proposal §12):
+Not the whole system at once. The first playable crafting beat is the
+**campfire loop** — it threads gathering, crafting, station placement, and the
+first minigame through one short, legible chain with a visible payoff:
 
 ```
 gather stone + driftwood
@@ -152,26 +127,9 @@ interact ──► fire-lighting minigame  (flint & steel / bellows timing)
    Campfire is LIT  ──► cooking unlocked
         │
         ▼
-cook raw food ──► a meal (heals / buffs)   ── and later: light, safety, a gathering spot
+cook raw food ──► a meal (heals / buffs)   ── and later: light, a gathering spot
 ```
 
-**Why this is a good first vertical:** it threads four systems — gathering,
-crafting, base placement, and minigames — through one short, legible loop, with
-a visible payoff (a lit fire you cooked on) at the end. It's the proposal's
-"one craftable item + one minigame" MVP slice (§18, §12) made concrete and
-pirate-flavored.
-
-**Design rules carried from the proposal:**
-- The minigame *grades*, it doesn't *gate* — poor performance makes a worse
-  fire (slow, smoky), not an impossible one (§12.1).
-- The server starts the minigame and validates the result; the client only
-  performs the interaction (§12.2).
-- Accessibility from day one: an assist / auto-complete path to a baseline
-  result (§12.3).
-
-### Open design threads
-- Do placed objects (the campfire) live in `base_objects` from the start, or in
-  a lighter table until base-building v1 lands? (proposal §15.3)
-- Is "lit" durable state (survives relog) or session-only at first?
-- What's the first cookable? Implies a food resource (fish? → ties to a future
-  fishing minigame).
+It's the proposal's "one craftable item + one minigame" MVP slice (§18, §12)
+made concrete and pirate-flavored — and it proves the `craft_intent` →
+server-validates → persist path that every later recipe reuses.
