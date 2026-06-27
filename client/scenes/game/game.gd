@@ -19,6 +19,12 @@ const INTERACT_RANGE := 48.0
 
 const DRIFTWOOD_TEX := preload("res://assets/driftwood.png")
 
+## Item presentation, the one place the client knows how to *show* an item
+## type the server sends. Unknown types still appear (title-cased, iconless),
+## so a new server-side item never silently vanishes from the hold.
+const ITEM_ICONS := {"driftwood": DRIFTWOOD_TEX}
+const ITEM_NAMES := {"driftwood": "Driftwood"}
+
 var _socket := WebSocketPeer.new()
 var _join_sent := false
 var _my_id := ""
@@ -39,6 +45,9 @@ var _nearest := {}                # {} or {kind: "npc"|"node", id, label}
 @onready var _waves: AudioStreamPlayer = $Waves
 @onready var _prompt: Label = $UI/Prompt
 @onready var _inventory_label: Label = $UI/Inventory
+@onready var _inventory_panel: PanelContainer = $UI/InventoryPanel
+@onready var _inventory_list: VBoxContainer = $UI/InventoryPanel/Margin/VBox/List
+@onready var _inventory_empty: Label = $UI/InventoryPanel/Margin/VBox/Empty
 @onready var _dialogue_panel: PanelContainer = $UI/DialoguePanel
 @onready var _dialogue_name: Label = $UI/DialoguePanel/Margin/VBox/NpcName
 @onready var _dialogue_line: Label = $UI/DialoguePanel/Margin/VBox/Line
@@ -104,6 +113,8 @@ func _process(delta: float) -> void:
 			_send_movement()
 			if Input.is_action_just_pressed("interact"):
 				_on_interact()
+			if Input.is_action_just_pressed("inventory"):
+				_toggle_inventory()
 		WebSocketPeer.STATE_CLOSED:
 			_status.text = "Lost connection to the cove (%d): %s" % [
 				_socket.get_close_code(), _socket.get_close_reason()
@@ -173,23 +184,74 @@ func _on_welcome(data: Dictionary) -> void:
 	print("[client] welcome: player_id=%s motd=%s" % [_my_id, data.get("motd")])
 	var spawn := Vector2(data.get("spawn_x", 0.0), data.get("spawn_y", 0.0))
 	_camera.position = spawn
-	_status.text = "%s\nWASD to walk, E to interact." % data.get("motd")
+	_status.text = "%s\nWASD to walk, E to interact, I for your hold." % data.get("motd")
 
 	# Returning players get their stuff back here — this is the payoff.
 	_inventory.clear()
 	for item: String in data.get("inventory", {}):
 		_inventory[item] = int(data["inventory"][item])
-	_update_inventory_label()
+	_refresh_inventory()
 
 func _on_inventory(data: Dictionary) -> void:
 	var item: String = data.get("item_type", "")
 	if item != "":
 		_inventory[item] = int(data.get("quantity", 0))
-		_update_inventory_label()
+		_refresh_inventory()
 		print("[client] inventory: %s=%d" % [item, _inventory[item]])
 
-func _update_inventory_label() -> void:
+## Keep both views of the hold in sync from the one authoritative dict: the
+## always-on corner readout and the toggle panel. Called whenever the server
+## changes a quantity, so an open panel updates live as you gather.
+func _refresh_inventory() -> void:
 	_inventory_label.text = "Driftwood: %d" % int(_inventory.get("driftwood", 0))
+	_rebuild_inventory_panel()
+
+func _toggle_inventory() -> void:
+	_inventory_panel.visible = not _inventory_panel.visible
+
+## Rebuild the panel's rows from scratch — at hold-sized item counts this is
+## cheaper than diffing, and it can't drift out of sync. Items are listed
+## alphabetically so a row never jumps around between rebuilds; zero-quantity
+## items are hidden, and an empty hold shows the placeholder line instead.
+func _rebuild_inventory_panel() -> void:
+	for row in _inventory_list.get_children():
+		row.queue_free()
+
+	var items := _inventory.keys()
+	items.sort()
+	var shown := 0
+	for item: String in items:
+		var qty := int(_inventory[item])
+		if qty <= 0:
+			continue
+		_inventory_list.add_child(_make_inventory_row(item, qty))
+		shown += 1
+	_inventory_empty.visible = shown == 0
+
+## One row: icon (if the client has art for the type), name, right-aligned
+## count. Built in code because the row count is data-driven.
+func _make_inventory_row(item: String, qty: int) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+
+	var icon := TextureRect.new()
+	icon.custom_minimum_size = Vector2(20, 20)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.texture = ITEM_ICONS.get(item, null)
+	row.add_child(icon)
+
+	var name_label := Label.new()
+	name_label.text = ITEM_NAMES.get(item, item.capitalize())
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(name_label)
+
+	var qty_label := Label.new()
+	qty_label.text = "x%d" % qty
+	qty_label.add_theme_color_override("font_color", Color(0.95, 0.88, 0.6, 1))
+	row.add_child(qty_label)
+
+	return row
 
 ## The server snapshot is the truth: create nodes for new players, update
 ## targets for known ones, remove anyone no longer present.
