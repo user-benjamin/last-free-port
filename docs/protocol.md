@@ -71,6 +71,19 @@ persists it to Postgres. Refusals come back as `error` with code `too_far`,
 { "type": "gather_intent", "data": { "node_id": "drift_1" } }
 ```
 
+### `craft_intent`
+
+Ask to craft a recipe by id. The server checks the recipe exists and that the
+player owns its inputs, then debits the inputs and credits the output in one
+Postgres transaction (all-or-nothing — a craft never half-applies). It is
+never automatic: a craft happens only in response to this message. Each
+changed item comes back as its own `inventory` message. Refusals come back as
+`error` with code `no_such_recipe`, `missing_materials`, or `craft_failed`.
+
+```json
+{ "type": "craft_intent", "data": { "recipe_id": "hammer" } }
+```
+
 ## Server → Client
 
 ### `welcome`
@@ -90,10 +103,22 @@ position, world bounds, and the player's full inventory loaded from Postgres
     "spawn_y": 304.0,
     "world_w": 1280.0,
     "world_h": 720.0,
-    "inventory": { "driftwood": 3 }
+    "inventory": { "driftwood": 3 },
+    "recipes": [
+      {
+        "id": "hammer",
+        "output": "hammer",
+        "output_qty": 1,
+        "inputs": { "driftwood": 1, "scrap_iron": 1 }
+      }
+    ]
   }
 }
 ```
+
+`recipes` is the server's recipe list, sent so the client renders its crafting
+menu from server-defined content (proposal §11.3: content is data) rather than
+hardcoding it. The client sends a `craft_intent` with one of these ids.
 
 ### `state`
 
@@ -122,9 +147,10 @@ absent from the snapshot, and toggle each resource node's visibility by its
 
 ### `inventory`
 
-Sent after a successful gather: the item that changed and its new
-authoritative total. The client overwrites its displayed count with this —
-it never computes totals itself.
+Sent after a successful gather or craft: an item that changed and its new
+authoritative total. A craft emits one of these per affected item (each
+debited input and the credited output). The client overwrites its displayed
+count with each — it never computes totals itself.
 
 ```json
 { "type": "inventory", "data": { "item_type": "driftwood", "quantity": 4 } }
@@ -161,4 +187,5 @@ and the session continues.
 ```
 
 Current codes: `expected_join`, `bad_join`, `bad_ticket`, `auth_unavailable`,
-`too_far`, `no_such_npc`, `depleted`, `no_such_node`, `grant_failed`.
+`too_far`, `no_such_npc`, `depleted`, `no_such_node`, `grant_failed`,
+`no_such_recipe`, `missing_materials`, `craft_failed`.

@@ -29,11 +29,26 @@ type ResourceNode struct {
 	Y    float64 `json:"y"`
 }
 
+// Recipe is a crafting recipe as defined in recipes.json. Crafting consumes
+// Inputs (item_type -> count) and grants OutputQty of Output. v1 recipes need
+// no workstation; station gating arrives with the campfire/forge (see
+// docs/crafting.md). Validation and the inventory transaction live on the
+// server — the client can request a craft, never assert one succeeded.
+type Recipe struct {
+	ID        string         `json:"id"`
+	Output    string         `json:"output"`
+	OutputQty int            `json:"output_qty"`
+	Inputs    map[string]int `json:"inputs"`
+}
+
 //go:embed npcs.json
 var npcsJSON []byte
 
 //go:embed resources.json
 var resourcesJSON []byte
+
+//go:embed recipes.json
+var recipesJSON []byte
 
 // loadNPCs parses the embedded content file. The file is contributor-edited
 // (see docs/lore/README.md), so validate enough to fail loudly at startup —
@@ -91,4 +106,39 @@ func loadResources() ([]ResourceNode, error) {
 		}
 	}
 	return content.Nodes, nil
+}
+
+// loadRecipes parses recipes.json with the same fail-loud contract as the
+// others. A malformed recipe (no inputs, non-positive quantities, duplicate
+// id) fails the build via TestEmbeddedContentLoads rather than producing a
+// recipe that crafts something from nothing.
+func loadRecipes() ([]Recipe, error) {
+	var content struct {
+		Recipes []Recipe `json:"recipes"`
+	}
+	if err := json.Unmarshal(recipesJSON, &content); err != nil {
+		return nil, fmt.Errorf("recipes.json is not valid JSON: %w", err)
+	}
+	seen := map[string]bool{}
+	for _, r := range content.Recipes {
+		if r.ID == "" || r.Output == "" {
+			return nil, fmt.Errorf("recipe %q: id and output are required", r.ID)
+		}
+		if seen[r.ID] {
+			return nil, fmt.Errorf("recipe %q: duplicate id", r.ID)
+		}
+		seen[r.ID] = true
+		if r.OutputQty < 1 {
+			return nil, fmt.Errorf("recipe %q: output_qty must be at least 1", r.ID)
+		}
+		if len(r.Inputs) == 0 {
+			return nil, fmt.Errorf("recipe %q: needs at least one input", r.ID)
+		}
+		for item, qty := range r.Inputs {
+			if qty < 1 {
+				return nil, fmt.Errorf("recipe %q: input %q quantity must be at least 1", r.ID, item)
+			}
+		}
+	}
+	return content.Recipes, nil
 }

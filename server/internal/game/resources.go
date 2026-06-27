@@ -12,7 +12,8 @@ const GatherRange = 48.0
 // so adding a node type is a deliberate two-line change, not a silent
 // "respawns never" bug.
 var respawnByType = map[string]time.Duration{
-	"driftwood": 30 * time.Second,
+	"driftwood":  30 * time.Second,
+	"scrap_iron": 45 * time.Second, // rarer than driftwood, so a touch slower
 }
 
 // resourceNode is the hub's runtime copy of a content node: the static

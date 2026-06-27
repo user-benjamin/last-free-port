@@ -52,8 +52,12 @@ func NewServer(tickets TicketRedeemer, inv InventoryStore, allowedOrigins []stri
 	if err != nil {
 		panic(err)
 	}
+	recipes, err := loadRecipes()
+	if err != nil {
+		panic(err)
+	}
 	return &Server{
-		hub:            NewHub(npcs, resources, inv),
+		hub:            NewHub(npcs, resources, recipes, inv),
 		tickets:        tickets,
 		inv:            inv,
 		allowedOrigins: allowedOrigins,
@@ -132,6 +136,12 @@ func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			s.hub.gathers <- gatherReq{playerID: p.id, nodeID: intent.NodeID}
+		case protocol.TypeCraftIntent:
+			var intent protocol.CraftIntent
+			if err := json.Unmarshal(env.Data, &intent); err != nil {
+				continue
+			}
+			s.hub.crafts <- craftReq{playerID: p.id, recipeID: intent.RecipeID}
 		default:
 			// Unknown types are logged and ignored so old clients don't
 			// break the session when the protocol grows.
@@ -211,6 +221,7 @@ func (s *Server) handshake(ctx context.Context, conn *websocket.Conn) (*player, 
 		WorldW:     WorldW,
 		WorldH:     WorldH,
 		Inventory:  items,
+		Recipes:    s.hub.recipeInfos,
 	})
 	if err != nil {
 		slog.Warn("write welcome failed", "player_id", p.id, "error", err)

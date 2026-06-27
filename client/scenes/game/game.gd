@@ -25,6 +25,11 @@ const DRIFTWOOD_TEX := preload("res://assets/driftwood.png")
 const ITEM_ICONS := {"driftwood": DRIFTWOOD_TEX}
 const ITEM_NAMES := {"driftwood": "Driftwood"}
 
+## Resource-node tints, keyed by type. There's no scrap-iron art yet, so its
+## nodes reuse the driftwood sprite with a rusty tint to read differently.
+## Types absent here render untinted. Replace with real art down the line.
+const NODE_TINTS := {"scrap_iron": Color(0.72, 0.55, 0.42)}
+
 var _socket := WebSocketPeer.new()
 var _join_sent := false
 var _my_id := ""
@@ -35,6 +40,7 @@ var _npc_nodes: Dictionary = {}   # npc_id -> Node2D
 var _npc_names: Dictionary = {}   # npc_id -> String
 var _res_nodes: Dictionary = {}   # node_id -> {sprite, pos, type, available}
 var _inventory: Dictionary = {}   # item_type -> quantity
+var _recipes: Array = []          # recipe dicts from welcome (server-defined)
 var _nearest := {}                # {} or {kind: "npc"|"node", id, label}
 
 @onready var _players: Node2D = $Players
@@ -48,6 +54,7 @@ var _nearest := {}                # {} or {kind: "npc"|"node", id, label}
 @onready var _inventory_panel: PanelContainer = $UI/InventoryPanel
 @onready var _inventory_list: VBoxContainer = $UI/InventoryPanel/Margin/VBox/List
 @onready var _inventory_empty: Label = $UI/InventoryPanel/Margin/VBox/Empty
+@onready var _recipes_list: VBoxContainer = $UI/InventoryPanel/Margin/VBox/Recipes
 @onready var _dialogue_panel: PanelContainer = $UI/DialoguePanel
 @onready var _dialogue_name: Label = $UI/DialoguePanel/Margin/VBox/NpcName
 @onready var _dialogue_line: Label = $UI/DialoguePanel/Margin/VBox/Line
@@ -186,6 +193,9 @@ func _on_welcome(data: Dictionary) -> void:
 	_camera.position = spawn
 	_status.text = "%s\nWASD to walk, E to interact, I for your hold." % data.get("motd")
 
+	# Recipes are server-defined content; the client only renders them.
+	_recipes = data.get("recipes", [])
+
 	# Returning players get their stuff back here — this is the payoff.
 	_inventory.clear()
 	for item: String in data.get("inventory", {}):
@@ -205,6 +215,9 @@ func _on_inventory(data: Dictionary) -> void:
 func _refresh_inventory() -> void:
 	_inventory_label.text = "Driftwood: %d" % int(_inventory.get("driftwood", 0))
 	_rebuild_inventory_panel()
+	# Recipe rows show their cost and disable when unaffordable, so they must
+	# rebuild whenever the inventory changes, not just on join.
+	_rebuild_recipes()
 
 func _toggle_inventory() -> void:
 	_inventory_panel.visible = not _inventory_panel.visible
@@ -242,7 +255,7 @@ func _make_inventory_row(item: String, qty: int) -> HBoxContainer:
 	row.add_child(icon)
 
 	var name_label := Label.new()
-	name_label.text = ITEM_NAMES.get(item, item.capitalize())
+	name_label.text = _display_name(item)
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(name_label)
 
@@ -252,6 +265,65 @@ func _make_inventory_row(item: String, qty: int) -> HBoxContainer:
 	row.add_child(qty_label)
 
 	return row
+
+## Friendly label for an item type: a known name, else the type title-cased
+## (Godot's capitalize turns "scrap_iron" into "Scrap Iron"). The one place
+## item display names are resolved, shared by the hold and the crafting list.
+func _display_name(item: String) -> String:
+	return ITEM_NAMES.get(item, item.capitalize())
+
+## Rebuild the crafting list from the server's recipes. Each row is a Craft
+## button plus its cost; the button disables when the player can't afford it,
+## but the server re-checks regardless — this is only a courtesy, not a gate.
+func _rebuild_recipes() -> void:
+	for row in _recipes_list.get_children():
+		row.queue_free()
+	for recipe: Dictionary in _recipes:
+		_recipes_list.add_child(_make_recipe_row(recipe))
+
+func _make_recipe_row(recipe: Dictionary) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+
+	var inputs: Dictionary = recipe.get("inputs", {})
+	var affordable := _can_afford(inputs)
+
+	var button := Button.new()
+	button.text = "Craft %s" % _display_name(recipe.get("output", "?"))
+	button.disabled = not affordable
+	var recipe_id: String = recipe.get("id", "")
+	button.pressed.connect(func() -> void: _craft(recipe_id))
+	row.add_child(button)
+
+	var cost := Label.new()
+	cost.text = _format_inputs(inputs)
+	cost.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cost.add_theme_font_size_override("font_size", 11)
+	cost.add_theme_color_override(
+		"font_color", Color(1, 1, 1, 0.55) if affordable else Color(1, 0.6, 0.5, 0.7)
+	)
+	row.add_child(cost)
+
+	return row
+
+## True only if the player holds every input in the required quantity.
+func _can_afford(inputs: Dictionary) -> bool:
+	for item: String in inputs:
+		if int(_inventory.get(item, 0)) < int(inputs[item]):
+			return false
+	return true
+
+## "1 driftwood, 1 scrap iron" — the recipe's inputs in a stable order.
+func _format_inputs(inputs: Dictionary) -> String:
+	var items := inputs.keys()
+	items.sort()
+	var parts: Array[String] = []
+	for item: String in items:
+		parts.append("%d %s" % [int(inputs[item]), _display_name(item)])
+	return ", ".join(parts)
+
+func _craft(recipe_id: String) -> void:
+	_send({"type": "craft_intent", "data": {"recipe_id": recipe_id}})
 
 ## The server snapshot is the truth: create nodes for new players, update
 ## targets for known ones, remove anyone no longer present.
@@ -293,8 +365,11 @@ func _sync_resource(res: Dictionary) -> void:
 	var available: bool = res.get("available", true)
 	if not _res_nodes.has(id):
 		var pos := Vector2(res.get("x", 0.0), res.get("y", 0.0))
+		var node_type: String = res.get("type", "driftwood")
 		var sprite := Sprite2D.new()
 		sprite.texture = DRIFTWOOD_TEX
+		# No per-type art yet; a tint distinguishes scrap iron from driftwood.
+		sprite.modulate = NODE_TINTS.get(node_type, Color.WHITE)
 		sprite.position = pos
 		_resources_root.add_child(sprite)
 		_res_nodes[id] = {
@@ -371,7 +446,7 @@ func _update_prompt() -> void:
 			var d := me.distance_to(entry.pos)
 			if d <= best:
 				best = d
-				_nearest = {"kind": "node", "id": id, "label": "gather %s" % entry.type}
+				_nearest = {"kind": "node", "id": id, "label": "gather %s" % _display_name(entry.type).to_lower()}
 
 	_prompt.visible = not _nearest.is_empty() and not _dialogue_panel.visible
 	if _prompt.visible:

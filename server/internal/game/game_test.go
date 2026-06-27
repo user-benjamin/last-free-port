@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/user-benjamin/last-free-port/server/internal/auth"
+	"github.com/user-benjamin/last-free-port/server/internal/inventory"
 	"github.com/user-benjamin/last-free-port/server/internal/protocol"
 )
 
@@ -51,6 +52,30 @@ func (f *fakeInventory) Grant(_ context.Context, userID, itemType string, n int)
 	return f.items[userID][itemType], nil
 }
 
+// Craft mirrors inventory.Store.Craft's semantics in memory: all-or-nothing,
+// returning inventory.ErrInsufficient if any input is short before mutating.
+func (f *fakeInventory) Craft(_ context.Context, userID string, inputs map[string]int, output string, outputQty int) (map[string]int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	owned := f.items[userID]
+	for item, need := range inputs {
+		if owned[item] < need {
+			return nil, inventory.ErrInsufficient
+		}
+	}
+	if f.items[userID] == nil {
+		f.items[userID] = map[string]int{}
+	}
+	changed := make(map[string]int, len(inputs)+1)
+	for item, need := range inputs {
+		f.items[userID][item] -= need
+		changed[item] = f.items[userID][item]
+	}
+	f.items[userID][output] += outputQty
+	changed[output] = f.items[userID][output]
+	return changed, nil
+}
+
 // testEnv is a game server wired to an in-process Valkey (miniredis) and a
 // fake inventory, so every test exercises the real ticket flow and gather
 // path with no external dependencies.
@@ -70,10 +95,29 @@ func newTestEnvFull(t *testing.T, spawnX, spawnY float64, npcs []NPC, resources 
 	tickets := auth.NewTickets(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
 	inv := newFakeInventory()
 	gs := &Server{
-		hub:     NewHub(npcs, resources, inv),
+		hub:     NewHub(npcs, resources, nil, inv),
 		tickets: tickets,
 		inv:     inv,
 		spawn:   func() (float64, float64) { return spawnX, spawnY },
+	}
+	srv := httptest.NewServer(http.HandlerFunc(gs.HandleWS))
+	t.Cleanup(srv.Close)
+	return &testEnv{srv: srv, tickets: tickets, inv: inv}
+}
+
+// newCraftEnv wires a server whose hub knows the given recipes, so craft tests
+// can exercise the full craft_intent path. Players spawn at a fixed point;
+// v1 crafting has no proximity requirement, so position doesn't matter.
+func newCraftEnv(t *testing.T, recipes []Recipe) *testEnv {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	tickets := auth.NewTickets(redis.NewClient(&redis.Options{Addr: mr.Addr()}))
+	inv := newFakeInventory()
+	gs := &Server{
+		hub:     NewHub(nil, nil, recipes, inv),
+		tickets: tickets,
+		inv:     inv,
+		spawn:   func() (float64, float64) { return 500, 500 },
 	}
 	srv := httptest.NewServer(http.HandlerFunc(gs.HandleWS))
 	t.Cleanup(srv.Close)
@@ -518,4 +562,96 @@ func TestResourceRespawns(t *testing.T) {
 		}
 		return false
 	})
+}
+
+// --- crafting ---
+
+func hammerRecipe() Recipe {
+	return Recipe{
+		ID: "hammer", Output: "hammer", OutputQty: 1,
+		Inputs: map[string]int{"driftwood": 1, "scrap_iron": 1},
+	}
+}
+
+func sendCraft(t *testing.T, ctx context.Context, conn *websocket.Conn, recipeID string) {
+	t.Helper()
+	intent, _ := json.Marshal(protocol.CraftIntent{RecipeID: recipeID})
+	if err := wsjson.Write(ctx, conn, protocol.Envelope{Type: protocol.TypeCraftIntent, Data: intent}); err != nil {
+		t.Fatalf("send craft: %v", err)
+	}
+}
+
+// readInventoryUpdates collects n inventory messages into item -> quantity. A
+// craft emits one per affected item in no guaranteed order, so the caller
+// reads them all and inspects the map.
+func readInventoryUpdates(t *testing.T, ctx context.Context, conn *websocket.Conn, n int) map[string]int {
+	t.Helper()
+	out := map[string]int{}
+	for i := 0; i < n; i++ {
+		envlp := readUntilType(t, ctx, conn, protocol.TypeInventory)
+		var inv protocol.Inventory
+		if err := json.Unmarshal(envlp.Data, &inv); err != nil {
+			t.Fatalf("decode inventory: %v", err)
+		}
+		out[inv.ItemType] = inv.Quantity
+	}
+	return out
+}
+
+func TestEmbeddedRecipesLoad(t *testing.T) {
+	recipes, err := loadRecipes()
+	if err != nil {
+		t.Fatalf("embedded recipes.json is invalid: %v", err)
+	}
+	if len(recipes) == 0 {
+		t.Fatal("expected at least one recipe in recipes.json")
+	}
+}
+
+func TestRecipesAppearInWelcome(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	env := newCraftEnv(t, []Recipe{hammerRecipe()})
+
+	_, welcome := env.join(t, ctx, "smith")
+	if len(welcome.Recipes) != 1 || welcome.Recipes[0].ID != "hammer" {
+		t.Fatalf("expected hammer recipe in welcome, got %+v", welcome.Recipes)
+	}
+}
+
+func TestCraftConsumesInputsAndGrantsOutput(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	env := newCraftEnv(t, []Recipe{hammerRecipe()})
+	// Seed exactly the inputs. join derives the user id as "user-"+username.
+	env.inv.Grant(ctx, "user-smith", "driftwood", 1)
+	env.inv.Grant(ctx, "user-smith", "scrap_iron", 1)
+
+	conn, _ := env.join(t, ctx, "smith")
+	sendCraft(t, ctx, conn, "hammer")
+
+	got := readInventoryUpdates(t, ctx, conn, 3) // 2 inputs + 1 output
+	if got["hammer"] != 1 || got["driftwood"] != 0 || got["scrap_iron"] != 0 {
+		t.Errorf("after craft want hammer=1 driftwood=0 scrap_iron=0, got %v", got)
+	}
+}
+
+func TestCraftWithoutMaterialsRefused(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	env := newCraftEnv(t, []Recipe{hammerRecipe()})
+
+	conn, _ := env.join(t, ctx, "broke") // empty inventory
+	sendCraft(t, ctx, conn, "hammer")
+	expectError(t, ctx, conn, "missing_materials")
+}
+
+func TestCraftUnknownRecipeRefused(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	env := newCraftEnv(t, []Recipe{hammerRecipe()})
+
+	conn, _ := env.join(t, ctx, "dreamer")
+	sendCraft(t, ctx, conn, "trebuchet")
+	expectError(t, ctx, conn, "no_such_recipe")
 }

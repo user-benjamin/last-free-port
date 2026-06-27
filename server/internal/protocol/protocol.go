@@ -22,6 +22,7 @@ const (
 	TypeDialogue     = "dialogue"
 	TypeGatherIntent = "gather_intent"
 	TypeInventory    = "inventory"
+	TypeCraftIntent  = "craft_intent"
 )
 
 // Join is the first message a client sends after connecting: a single-use
@@ -43,6 +44,20 @@ type Welcome struct {
 	WorldW     float64        `json:"world_w"`
 	WorldH     float64        `json:"world_h"`
 	Inventory  map[string]int `json:"inventory"`
+	// Recipes are what the player can craft, sent so the client renders the
+	// crafting list from server-defined content rather than hardcoding it.
+	Recipes []RecipeInfo `json:"recipes"`
+}
+
+// RecipeInfo is one craftable recipe as shown to the client: enough to render
+// a crafting list and send a craft_intent, but no server-only fields. Mirrors
+// the content recipe (game.Recipe) without the protocol package depending on
+// the game package.
+type RecipeInfo struct {
+	ID        string         `json:"id"`
+	Output    string         `json:"output"`
+	OutputQty int            `json:"output_qty"`
+	Inputs    map[string]int `json:"inputs"`
 }
 
 // MoveIntent is the client's held movement direction (each component
@@ -111,11 +126,21 @@ type GatherIntent struct {
 	NodeID string `json:"node_id"`
 }
 
-// Inventory is sent after a successful gather: the item that changed and its
-// new authoritative total. The client never computes its own totals.
+// Inventory is sent after a successful gather or craft: an item that changed
+// and its new authoritative total. A craft emits one per affected item (each
+// debited input and the credited output). The client never computes totals.
 type Inventory struct {
 	ItemType string `json:"item_type"`
 	Quantity int    `json:"quantity"`
+}
+
+// CraftIntent asks to craft a recipe by id. Like the other intents, the
+// server validates everything (recipe exists, player owns the inputs) and
+// performs the inventory transaction — the client requests, never asserts, a
+// successful craft. Refusals come back as error with code no_such_recipe,
+// missing_materials, or craft_failed.
+type CraftIntent struct {
+	RecipeID string `json:"recipe_id"`
 }
 
 // Error reports a protocol-level failure to the client.

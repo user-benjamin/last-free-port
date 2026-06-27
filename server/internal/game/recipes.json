@@ -1,0 +1,11 @@
+{
+  "_readme": "Crafting recipes. Each consumes its inputs (item_type -> count) and grants output_qty of output. Server-authoritative: the hub validates the player owns the inputs, then debits and credits in one Postgres transaction (see inventory.Craft). v1 recipes need no workstation; station-gated recipes come with the campfire/forge. See docs/crafting.md.",
+  "recipes": [
+    {
+      "id": "hammer",
+      "output": "hammer",
+      "output_qty": 1,
+      "inputs": { "driftwood": 1, "scrap_iron": 1 }
+    }
+  ]
+}
