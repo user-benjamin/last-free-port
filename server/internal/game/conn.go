@@ -30,11 +30,17 @@ type Server struct {
 	hub     *Hub
 	tickets TicketRedeemer
 	inv     InventoryStore
+	// allowedOrigins are extra Origin host patterns (coder/websocket
+	// path.Match style, e.g. "play.example.com", "127.0.0.1:*") permitted in
+	// addition to a same-host Origin. The Godot desktop client sends no
+	// Origin header and is always allowed; this list is what lets a specific
+	// browser export connect without opening the door to every website.
+	allowedOrigins []string
 	// spawn is injectable so tests can place players deterministically.
 	spawn func() (float64, float64)
 }
 
-func NewServer(tickets TicketRedeemer, inv InventoryStore) *Server {
+func NewServer(tickets TicketRedeemer, inv InventoryStore, allowedOrigins []string) *Server {
 	npcs, err := loadNPCs()
 	if err != nil {
 		// Content is compiled in: if it's invalid, the binary is defective
@@ -47,10 +53,11 @@ func NewServer(tickets TicketRedeemer, inv InventoryStore) *Server {
 		panic(err)
 	}
 	return &Server{
-		hub:     NewHub(npcs, resources, inv),
-		tickets: tickets,
-		inv:     inv,
-		spawn:   randomSpawn,
+		hub:            NewHub(npcs, resources, inv),
+		tickets:        tickets,
+		inv:            inv,
+		allowedOrigins: allowedOrigins,
+		spawn:          randomSpawn,
 	}
 }
 
@@ -63,10 +70,12 @@ func randomSpawn() (float64, float64) {
 // second one. The hub itself is never touched directly — channels only.
 func (s *Server) HandleWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		// Dev only: the Godot desktop client sends no Origin header and a
-		// browser export runs on a different origin than the server.
-		// Lock this down when auth lands (proposal §16).
-		OriginPatterns: []string{"*"},
+		// Locked down (proposal §16). coder/websocket accepts a request when
+		// the Origin header is absent (the Godot desktop client) or its host
+		// matches the request Host or one of these patterns. An empty list
+		// therefore means "desktop and same-host only" — a browser export on
+		// another origin must be named explicitly via GAME_ALLOWED_ORIGINS.
+		OriginPatterns: s.allowedOrigins,
 	})
 	if err != nil {
 		slog.Warn("websocket accept failed", "error", err)

@@ -69,6 +69,10 @@ services:
     environment:
       DATABASE_URL: postgres://corsair:corsair-dev@postgres:5432/corsair?sslmode=disable
       VALKEY_ADDR: valkey:6379
+      # Browser-export origins allowed to open the WebSocket. Desktop Godot
+      # sends no Origin and is always allowed; these patterns cover a local
+      # web export during dev. Production sets its real play origin here.
+      GAME_ALLOWED_ORIGINS: "127.0.0.1:*,localhost:*"
     depends_on:
       migrate:
         condition: service_completed_successfully
