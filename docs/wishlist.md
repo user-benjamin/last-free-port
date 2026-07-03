@@ -53,7 +53,8 @@ are the two that matter most for "worth showing."
 | Feature | Status | Notes |
 |---|---|---|
 | **Inventory** | ✅ Done | Persists in Postgres; toggle panel + legend ([PR #9](https://github.com/user-benjamin/last-free-port/pull/9)) 🎉 |
-| **Build / crafting mechanics** | 📐 Planned | The next big playable beat. Full design in **[crafting.md](crafting.md)** (workstations, recipe tree, progression, durability). |
+| **Build / crafting mechanics** | 🔜 Next | Full design in **[crafting.md](crafting.md)**. **v1 hammer slice in progress** — gather scrap iron, craft `driftwood + scrap iron` → hammer, server-validated. Stations/minigame/durability follow. |
+| **Achievements** | 🌫️ Someday | Track notable deeds (first craft, first treasure, captains bested) and display them on an eventual player homepage. The "deeds the world remembers" — pairs naturally with reputation & the nemesis system. Way down the line. |
 | **Skill tree / level progression** | 📐 Planned | Resolved: **use-based proficiency** (you get better at what you do), not an XP tree — see [crafting.md](crafting.md#progression--four-axes-no-skill-tree). |
 | **Combat** | 🌫️ Someday | Grounded and dangerous: melee, pistols, boarding (proposal §11.5). Big system; gated behind the make/build loop being fun first. |
 | **Minigames** | 🌫️ Someday | A framework, not one-offs (proposal §12). **First instance arrives early** as the campfire fire-lighting game — a tiny, contained proof. |

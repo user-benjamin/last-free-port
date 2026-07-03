@@ -6,21 +6,25 @@ package game
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"math"
 	"math/rand/v2"
 	"time"
 
+	"github.com/user-benjamin/last-free-port/server/internal/inventory"
 	"github.com/user-benjamin/last-free-port/server/internal/protocol"
 )
 
 // InventoryStore is what the simulation needs from the persistence layer:
-// load a player's inventory on join, and grant items on gather. Declared at
-// the consumer so tests inject an in-memory fake and CI needs no Postgres;
-// *inventory.Store is the production implementation.
+// load a player's inventory on join, grant items on gather, and apply a recipe
+// (debit inputs + credit output) on craft. Declared at the consumer so tests
+// inject an in-memory fake and CI needs no Postgres; *inventory.Store is the
+// production implementation.
 type InventoryStore interface {
 	Load(ctx context.Context, userID string) (map[string]int, error)
 	Grant(ctx context.Context, userID, itemType string, n int) (int, error)
+	Craft(ctx context.Context, userID string, inputs map[string]int, output string, outputQty int) (map[string]int, error)
 }
 
 const (
@@ -72,6 +76,11 @@ type gatherReq struct {
 	nodeID   string
 }
 
+type craftReq struct {
+	playerID string
+	recipeID string
+}
+
 // Hub runs the world. Create with NewHub, which starts the tick loop.
 type Hub struct {
 	joins   chan *player
@@ -79,6 +88,7 @@ type Hub struct {
 	moves   chan moveReq
 	talks   chan talkReq
 	gathers chan gatherReq
+	crafts  chan craftReq
 	players map[string]*player
 	npcs    []NPC
 	// npcStates is precomputed once: NPCs don't move yet, so their part of
@@ -87,23 +97,35 @@ type Hub struct {
 	// resources are the live gatherable nodes; only the hub goroutine
 	// touches their availability/respawn state.
 	resources []*resourceNode
-	inv       InventoryStore
+	// recipes is the craft lookup by id; recipeInfos is the same content
+	// pre-shaped for the welcome message. Both are read-only after NewHub.
+	recipes     map[string]Recipe
+	recipeInfos []protocol.RecipeInfo
+	inv         InventoryStore
 }
 
-func NewHub(npcs []NPC, resources []ResourceNode, inv InventoryStore) *Hub {
+func NewHub(npcs []NPC, resources []ResourceNode, recipes []Recipe, inv InventoryStore) *Hub {
 	h := &Hub{
 		joins:     make(chan *player, 8),
 		leaves:    make(chan string, 8),
 		moves:     make(chan moveReq, 256),
 		talks:     make(chan talkReq, 64),
 		gathers:   make(chan gatherReq, 64),
+		crafts:    make(chan craftReq, 64),
 		players:   make(map[string]*player),
 		npcs:      npcs,
 		resources: newResourceNodes(resources),
+		recipes:   make(map[string]Recipe, len(recipes)),
 		inv:       inv,
 	}
 	for _, n := range npcs {
 		h.npcStates = append(h.npcStates, protocol.NPCState{ID: n.ID, Name: n.Name, X: n.X, Y: n.Y})
+	}
+	for _, r := range recipes {
+		h.recipes[r.ID] = r
+		h.recipeInfos = append(h.recipeInfos, protocol.RecipeInfo{
+			ID: r.ID, Output: r.Output, OutputQty: r.OutputQty, Inputs: r.Inputs,
+		})
 	}
 	go h.run()
 	return h
@@ -128,6 +150,8 @@ func (h *Hub) run() {
 			h.talk(t)
 		case g := <-h.gathers:
 			h.gather(g)
+		case c := <-h.crafts:
+			h.craft(c)
 		case <-ticker.C:
 			h.tick()
 		}
@@ -193,6 +217,58 @@ func (h *Hub) persistGather(userID string, send chan []byte, itemType string) {
 	trySend(send, mustFrame(protocol.TypeInventory, protocol.Inventory{
 		ItemType: itemType, Quantity: qty,
 	}))
+}
+
+// craft validates a craft request on the hub goroutine — the recipe must
+// exist — then hands the Postgres transaction (which checks the player can
+// afford the inputs) to a separate goroutine, for the same reason gather
+// does: a slow database must never stall the single-threaded world. v1
+// recipes need no workstation, so there's no proximity check here yet.
+func (h *Hub) craft(c craftReq) {
+	p, ok := h.players[c.playerID]
+	if !ok {
+		return
+	}
+	recipe, ok := h.recipes[c.recipeID]
+	if !ok {
+		h.sendTo(p, protocol.TypeError, protocol.Error{
+			Code: "no_such_recipe", Message: "you don't know how to make that",
+		})
+		return
+	}
+	slog.Info("craft", "player_id", p.id, "recipe_id", recipe.ID)
+	go h.persistCraft(p.userID, p.send, recipe)
+}
+
+// persistCraft runs off the hub goroutine: it applies the recipe in one
+// Postgres transaction and reports every changed total back to the player.
+// ErrInsufficient is the player's fault (not enough materials) and comes back
+// as a soft, in-session error; anything else is a real failure.
+func (h *Hub) persistCraft(userID string, send chan []byte, recipe Recipe) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	changed, err := h.inv.Craft(ctx, userID, recipe.Inputs, recipe.Output, recipe.OutputQty)
+	if errors.Is(err, inventory.ErrInsufficient) {
+		trySend(send, mustFrame(protocol.TypeError, protocol.Error{
+			Code: "missing_materials", Message: "you don't have the makings for that",
+		}))
+		return
+	}
+	if err != nil {
+		slog.Error("craft failed", "user_id", userID, "recipe_id", recipe.ID, "error", err)
+		trySend(send, mustFrame(protocol.TypeError, protocol.Error{
+			Code: "craft_failed", Message: "the work went wrong — try again",
+		}))
+		return
+	}
+	// One inventory message per affected item (debited inputs + the output)
+	// so the client overwrites each new authoritative total.
+	for item, qty := range changed {
+		trySend(send, mustFrame(protocol.TypeInventory, protocol.Inventory{
+			ItemType: item, Quantity: qty,
+		}))
+	}
 }
 
 // talk validates a conversation request and pushes the reply straight into
