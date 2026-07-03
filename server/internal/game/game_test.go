@@ -532,9 +532,12 @@ func TestInventoryPersistsAcrossReconnect(t *testing.T) {
 
 func TestResourceRespawns(t *testing.T) {
 	// Shorten driftwood's respawn for this test only; tests run serially so
-	// mutating the package var is safe with a deferred restore.
+	// mutating the package var is safe with a deferred restore. Must span
+	// several tick periods (50ms at 20Hz): tick() respawns before it
+	// broadcasts, so a respawn <= one tick can flip the node back before any
+	// snapshot ever shows it depleted.
 	original := respawnByType["driftwood"]
-	respawnByType["driftwood"] = 50 * time.Millisecond
+	respawnByType["driftwood"] = 250 * time.Millisecond
 	defer func() { respawnByType["driftwood"] = original }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
